@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  Briefcase, Plus, Trash2, TrendingUp, TrendingDown, Search, X, ShieldAlert,
+  Briefcase, Plus, Trash2, Search, X, ShieldAlert,
 } from "lucide-react";
 import Link from "next/link";
 import {
@@ -13,6 +13,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { apiUrl } from "@/lib/api-url";
+import type { PortfolioRiskResponse } from "@/lib/portfolio-risk";
+import PortfolioRiskDashboard from "@/components/portfolio-risk-dashboard";
 import {
   formatPrice, formatChangePercent, changeColor, changeBg, displaySymbol,
 } from "@/lib/format";
@@ -44,27 +46,6 @@ const PIE_COLORS = [
   "#f97316","#ec4899","#14b8a6","#3b82f6","#84cc16",
 ];
 
-// Approximate sector betas (NSE sector averages)
-const SECTOR_BETAS: Record<string, number> = {
-  Banking: 1.25, Finance: 1.20, IT: 0.90, Pharma: 0.70, FMCG: 0.60,
-  Energy: 1.10, Auto: 1.15, Metals: 1.30, Infra: 1.20, Realty: 1.40,
-  Telecom: 0.85, Default: 1.0,
-};
-
-function getSectorBeta(symbol: string): number {
-  const s = symbol.toUpperCase();
-  if (/HDFCBANK|ICICIBANK|SBIN|KOTAKBANK|AXISBANK|BANDHAN|AUBANK/.test(s)) return SECTOR_BETAS.Banking;
-  if (/TCS|INFY|WIPRO|HCLTECH|TECHM|COFORGE|MPHASIS|LTTS|OFSS/.test(s)) return SECTOR_BETAS.IT;
-  if (/SUNPHARMA|DRREDDY|CIPLA|DIVISLAB|LUPIN|BIOCON|AUROPHARMA/.test(s)) return SECTOR_BETAS.Pharma;
-  if (/HINDUNILVR|ITC|NESTLEIND|BRITANNIA|DABUR|MARICO/.test(s)) return SECTOR_BETAS.FMCG;
-  if (/RELIANCE|ONGC|BPCL|IOC|GAIL|PETRONET/.test(s)) return SECTOR_BETAS.Energy;
-  if (/MARUTI|TATAMOTORS|M&M|BAJAJ-AUTO|HEROMOTOCO|EICHERMOT/.test(s)) return SECTOR_BETAS.Auto;
-  if (/TATASTEEL|JSWSTEEL|HINDALCO|VEDL|SAIL|NMDC/.test(s)) return SECTOR_BETAS.Metals;
-  if (/DLF|GODREJPROP|OBEROIRLTY/.test(s)) return SECTOR_BETAS.Realty;
-  if (/LT|ADANIPORTS|ADANIENT/.test(s)) return SECTOR_BETAS.Infra;
-  return SECTOR_BETAS.Default;
-}
-
 function fmt(n: number | null | undefined, decimals = 2): string {
   if (n == null) return "—";
   return n.toLocaleString("en-IN", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
@@ -92,6 +73,25 @@ export default function PortfolioPage() {
     queryFn: () => fetch(apiUrl("/portfolio")).then(r => r.json()),
     refetchInterval: 60_000,
   });
+  const {
+    data: riskData,
+    isLoading: isRiskLoading,
+    error: riskError,
+    refetch: refetchRisk,
+  } = useQuery<PortfolioRiskResponse>({
+    queryKey: ["portfolio-risk"],
+    queryFn: async () => {
+      const response = await fetch(apiUrl("/portfolio/risk"));
+      const body = await response.json();
+      if (!response.ok) {
+        throw new Error(body.error ?? "Risk analytics could not be loaded");
+      }
+      return body as PortfolioRiskResponse;
+    },
+    enabled: tab === "risk" && holdings.length > 0,
+    staleTime: 5 * 60_000,
+    refetchInterval: tab === "risk" ? 5 * 60_000 : false,
+  });
 
   const addMutation = useMutation({
     mutationFn: (body: object) =>
@@ -99,6 +99,7 @@ export default function PortfolioPage() {
         .then(r => r.ok ? r.json() : r.json().then(d => Promise.reject(d))),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["portfolio"] });
+      qc.invalidateQueries({ queryKey: ["portfolio-risk"] });
       setShowAdd(false); setSelected(null); setForm({ quantity: "", avgPrice: "", purchaseDate: "", notes: "" });
       toast.success("Holding added");
     },
@@ -107,7 +108,11 @@ export default function PortfolioPage() {
 
   const deleteMutation = useMutation({
     mutationFn: (id: number) => fetch(apiUrl(`/portfolio/${id}`), { method: "DELETE" }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["portfolio"] }); toast.success("Removed"); },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["portfolio"] });
+      qc.invalidateQueries({ queryKey: ["portfolio-risk"] });
+      toast.success("Removed");
+    },
   });
 
   const handleSearch = async () => {
@@ -132,46 +137,6 @@ export default function PortfolioPage() {
   const totalCurrent = holdings.reduce((s, h) => s + (h.currentValue ?? h.invested), 0);
   const totalPnl = totalCurrent - totalInvested;
   const totalPnlPct = totalInvested > 0 ? (totalPnl / totalInvested) * 100 : 0;
-
-  // Risk calculations
-  const riskMetrics = useMemo(() => {
-    if (holdings.length === 0) return null;
-
-    // Weighted portfolio beta
-    const weightedBeta = holdings.reduce((sum, h) => {
-      const weight = (h.currentValue ?? h.invested) / (totalCurrent || 1);
-      return sum + getSectorBeta(h.symbol) * weight;
-    }, 0);
-
-    // Daily returns approximation from today's change
-    const dailyReturns = holdings.map(h => (h.regularMarketChangePercent ?? 0) / 100);
-    const dailyPnlPct = dailyReturns.reduce((s, r, i) => {
-      const weight = (holdings[i].currentValue ?? holdings[i].invested) / (totalCurrent || 1);
-      return s + r * weight;
-    }, 0);
-
-    // Annualized volatility estimate (using cross-sectional dispersion as proxy)
-    const avgDailyReturn = dailyPnlPct;
-    const variance = dailyReturns.reduce((s, r, i) => {
-      const weight = (holdings[i].currentValue ?? holdings[i].invested) / (totalCurrent || 1);
-      return s + weight * Math.pow(r - avgDailyReturn, 2);
-    }, 0);
-    const dailyVol = Math.sqrt(variance);
-    const annualVol = dailyVol * Math.sqrt(252) * 100;
-
-    // Value at Risk (95% CI, parametric) = Z × σ × Portfolio Value
-    const z95 = 1.645;
-    const varINR = z95 * dailyVol * totalCurrent;
-    const varPct = z95 * dailyVol * 100;
-
-    // Max drawdown from individual stock P&Ls (worst single holding % loss)
-    const maxLoss = Math.min(...holdings.map(h => h.pnlPct ?? 0));
-
-    // Concentration risk (max holding weight)
-    const maxWeight = Math.max(...holdings.map(h => (h.currentValue ?? h.invested) / (totalCurrent || 1))) * 100;
-
-    return { weightedBeta, annualVol, varINR, varPct, dailyPnlPct: dailyPnlPct * 100, maxLoss, maxWeight };
-  }, [holdings, totalCurrent]);
 
   // Allocation by exchange/sector
   const sectorMap: Record<string, number> = {};
@@ -348,61 +313,19 @@ export default function PortfolioPage() {
       {/* Risk Analytics tab */}
       {tab === "risk" && (
         <div className="space-y-4">
-          {!riskMetrics || holdings.length === 0 ? (
+          {holdings.length === 0 ? (
             <div className="py-16 text-center rounded-lg border bg-card">
               <ShieldAlert className="h-10 w-10 text-muted-foreground/20 mx-auto mb-3" />
               <p className="text-muted-foreground">Add holdings to see risk analytics</p>
             </div>
           ) : (
             <>
-              <div className="grid gap-3 grid-cols-2 lg:grid-cols-3">
-                <div className="rounded-lg border bg-card p-4">
-                  <div className="text-xs text-muted-foreground mb-1">Portfolio Beta (β)</div>
-                  <div className="text-2xl font-bold">{riskMetrics.weightedBeta.toFixed(2)}</div>
-                  <div className="text-xs text-muted-foreground mt-1">
-                    {riskMetrics.weightedBeta > 1.2 ? "⚠️ High risk vs Nifty" :
-                     riskMetrics.weightedBeta < 0.8 ? "🛡️ Defensive portfolio" :
-                     "⚖️ Market-aligned"}
-                  </div>
-                </div>
-                <div className="rounded-lg border bg-card p-4">
-                  <div className="text-xs text-muted-foreground mb-1">Annualized Volatility (σ)</div>
-                  <div className="text-2xl font-bold">{riskMetrics.annualVol.toFixed(1)}%</div>
-                  <div className="text-xs text-muted-foreground mt-1">
-                    {riskMetrics.annualVol > 30 ? "⚠️ High volatility" : riskMetrics.annualVol < 15 ? "🟢 Low volatility" : "🟡 Moderate volatility"}
-                  </div>
-                </div>
-                <div className="rounded-lg border bg-card p-4">
-                  <div className="text-xs text-muted-foreground mb-1">Value at Risk (95% CI, 1-day)</div>
-                  <div className="text-2xl font-bold text-red-400">{fmtL(riskMetrics.varINR)}</div>
-                  <div className="text-xs text-muted-foreground mt-1">
-                    Max daily loss at 95% confidence: {riskMetrics.varPct.toFixed(2)}%
-                  </div>
-                </div>
-                <div className="rounded-lg border bg-card p-4">
-                  <div className="text-xs text-muted-foreground mb-1">Today&apos;s Portfolio Return</div>
-                  <div className={`text-2xl font-bold tabular-nums ${changeColor(riskMetrics.dailyPnlPct)}`}>
-                    {riskMetrics.dailyPnlPct >= 0 ? "+" : ""}{riskMetrics.dailyPnlPct.toFixed(2)}%
-                  </div>
-                  <div className="text-xs text-muted-foreground mt-1">Weighted daily P&L</div>
-                </div>
-                <div className="rounded-lg border bg-card p-4">
-                  <div className="text-xs text-muted-foreground mb-1">Worst Holding P&L</div>
-                  <div className={`text-2xl font-bold tabular-nums ${changeColor(riskMetrics.maxLoss)}`}>
-                    {riskMetrics.maxLoss.toFixed(2)}%
-                  </div>
-                  <div className="text-xs text-muted-foreground mt-1">Max single-stock drawdown</div>
-                </div>
-                <div className="rounded-lg border bg-card p-4">
-                  <div className="text-xs text-muted-foreground mb-1">Concentration Risk</div>
-                  <div className={`text-2xl font-bold ${riskMetrics.maxWeight > 40 ? "text-orange-400" : "text-green-400"}`}>
-                    {riskMetrics.maxWeight.toFixed(1)}%
-                  </div>
-                  <div className="text-xs text-muted-foreground mt-1">
-                    {riskMetrics.maxWeight > 40 ? "⚠️ Concentrated in one stock" : "✅ Well diversified"}
-                  </div>
-                </div>
-              </div>
+              <PortfolioRiskDashboard
+                data={riskData}
+                isLoading={isRiskLoading}
+                error={riskError instanceof Error ? riskError.message : riskError ? "Risk analytics could not be loaded" : null}
+                onRetry={() => void refetchRisk()}
+              />
 
               {/* P&L bar chart */}
               {pnlBarData.length > 0 && (
@@ -424,9 +347,6 @@ export default function PortfolioPage() {
                 </div>
               )}
 
-              <div className="rounded-lg border border-yellow-500/20 bg-yellow-500/5 p-3 text-xs text-yellow-400">
-                ⚠️ Risk metrics are estimates using sector beta approximations and today&apos;s returns. For precise VaR, use historical daily returns over 1+ year.
-              </div>
             </>
           )}
         </div>

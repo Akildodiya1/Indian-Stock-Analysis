@@ -195,3 +195,131 @@ body {
     background-color: var(--elevate-2);
   }
 }
+
+/* Stock detail: compact exchange-terminal hierarchy, with responsive, visible controls. */
+.stock-detail-page {
+  width: 100%;
+  margin-inline: auto;
+  padding-bottom: clamp(1.5rem, 4vw, 3rem);
+}
+
+.stock-detail-page .stock-detail-title {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.035em;
+}
+
+.stock-detail-page .stock-price-card {
+  position: relative;
+  overflow: hidden;
+  background:
+    linear-gradient(115deg, hsl(var(--primary) / 0.08), transparent 54%),
+    hsl(var(--card));
+}
+
+.stock-detail-page .stock-price-card > :first-child {
+  position: relative;
+  z-index: 1;
+}
+
+.stock-detail-page .stock-stats-card,
+.stock-detail-page .stock-price-card,
+.stock-detail-page .insight-metric-card,
+.stock-detail-page .insight-chart-card,
+.stock-detail-page .insight-compare-card {
+  border-color: hsl(var(--border) / 0.88);
+  box-shadow: inset 0 1px 0 hsl(var(--foreground) / 0.025);
+}
+
+.stock-detail-page .stock-stats-card h3 {
+  letter-spacing: 0.12em;
+}
+
+.stock-detail-page .insight-metric-card {
+  min-height: 4.65rem;
+  transition: border-color 150ms ease, background-color 150ms ease;
+}
+
+.stock-detail-page .insight-metric-card:hover,
+.stock-detail-page .insight-chart-card:hover,
+.stock-detail-page .insight-compare-card:hover {
+  border-color: hsl(var(--primary) / 0.38);
+}
+
+.stock-detail-page .insight-metric-card > div:nth-child(2) {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.stock-detail-page .insight-chart-card,
+.stock-detail-page .insight-compare-card {
+  padding: clamp(0.75rem, 1.5vw, 1rem);
+}
+
+.stock-detail-page .insight-data-notice {
+  border-color: hsl(var(--border) / 0.9);
+  background:
+    repeating-linear-gradient(135deg, transparent 0 8px, hsl(var(--foreground) / 0.012) 8px 9px),
+    hsl(var(--card) / 0.58);
+}
+
+.stock-detail-page .stock-insight-tab-rail,
+.stock-detail-page .stock-technical-view-rail {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--muted-foreground) / 0.4) transparent;
+  overscroll-behavior-inline: contain;
+}
+
+.stock-detail-page .stock-insight-tab-rail button,
+.stock-detail-page .stock-technical-view-rail button {
+  min-height: 2.65rem;
+  touch-action: manipulation;
+}
+
+.stock-detail-page button:focus-visible,
+.stock-detail-page a:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+.stock-detail-page table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.stock-detail-page th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background-color: hsl(var(--muted) / 0.9);
+}
+
+@media (max-width: 640px) {
+  .stock-detail-page .stock-price-card {
+    padding: 1rem;
+  }
+
+  .stock-detail-page .stock-insight-tab-rail {
+    margin-inline: -0.25rem;
+    padding-inline: 0.25rem;
+  }
+
+  .stock-detail-page .insight-data-notice {
+    padding: 1.5rem 1rem;
+  }
+
+  .stock-detail-page table {
+    min-width: 40rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stock-detail-page *,
+  .stock-detail-page *::before,
+  .stock-detail-page *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

@@ -520,6 +520,361 @@ export async function fetchFinancialRatios(
   }
 }
 
+export interface FinancialSeriesPoint {
+  period: string;
+  date: string;
+  revenue?: number;
+  grossProfit?: number;
+  operatingIncome?: number;
+  operatingExpense?: number;
+  otherIncome?: number;
+  netIncome?: number;
+  eps?: number;
+  ebitda?: number;
+  operatingCashFlow?: number;
+  freeCashFlow?: number;
+  investingCashFlow?: number;
+  financingCashFlow?: number;
+  capitalExpenditure?: number;
+  totalAssets?: number;
+  totalLiabilities?: number;
+  currentAssets?: number;
+  currentLiabilities?: number;
+  inventory?: number;
+  receivables?: number;
+  payables?: number;
+  cash?: number;
+  debt?: number;
+  equity?: number;
+  commonStock?: number;
+  reserves?: number;
+  fixedAssets?: number;
+  capitalWorkInProgress?: number;
+  costOfRevenue?: number;
+  inventoryDays?: number;
+  receivableDays?: number;
+  payableDays?: number;
+  workingCapital?: number;
+  operatingMargin?: number;
+  netMargin?: number;
+}
+
+export interface StockInsights {
+  annual: FinancialSeriesPoint[];
+  quarterly: FinancialSeriesPoint[];
+  metrics: {
+    faceValue?: number;
+    sharesOutstanding?: number;
+    deliveryPct?: number;
+    annualVolatility?: number;
+    vwap?: number;
+    enterpriseValue?: number;
+    priceToSales?: number;
+    evToSales?: number;
+    evToEbitda?: number;
+    bookValue?: number;
+    heldPercentInsiders?: number;
+    heldPercentInstitutions?: number;
+    returnOnEquity?: number;
+    returnOnAssets?: number;
+    currentRatio?: number;
+    quickRatio?: number;
+    debtToEquity?: number;
+    marketCapToSales?: number;
+    inventoryDays?: number;
+    receivableDays?: number;
+    payableDays?: number;
+  };
+  relativePerformance: {
+    stock: { oneMonth?: number; threeMonth?: number; oneYear?: number };
+    nifty50: { oneMonth?: number; threeMonth?: number; oneYear?: number };
+    vsNifty50: { oneMonth?: number; threeMonth?: number; oneYear?: number };
+  };
+}
+
+type FinancialNumericKey = Exclude<
+  keyof FinancialSeriesPoint,
+  "period" | "date"
+>;
+
+const FINANCIAL_TYPES: Array<[string, FinancialNumericKey]> = [
+  ["TotalRevenue", "revenue"],
+  ["GrossProfit", "grossProfit"],
+  ["OperatingIncome", "operatingIncome"],
+  ["OperatingExpense", "operatingExpense"],
+  ["OtherNonOperatingIncomeExpenses", "otherIncome"],
+  ["NetIncome", "netIncome"],
+  ["DilutedEPS", "eps"],
+  ["EBITDA", "ebitda"],
+  ["OperatingCashFlow", "operatingCashFlow"],
+  ["FreeCashFlow", "freeCashFlow"],
+  ["InvestingCashFlow", "investingCashFlow"],
+  ["FinancingCashFlow", "financingCashFlow"],
+  ["CapitalExpenditure", "capitalExpenditure"],
+  ["TotalAssets", "totalAssets"],
+  ["TotalLiabilitiesNetMinorityInterest", "totalLiabilities"],
+  ["CurrentAssets", "currentAssets"],
+  ["CurrentLiabilities", "currentLiabilities"],
+  ["Inventory", "inventory"],
+  ["InventoryNet", "inventory"],
+  ["AccountsReceivable", "receivables"],
+  ["AccountsPayable", "payables"],
+  [
+    "CashCashEquivalentsAndShortTermInvestments",
+    "cash",
+  ],
+  ["TotalDebt", "debt"],
+  ["StockholdersEquity", "equity"],
+  ["CommonStock", "commonStock"],
+  ["RetainedEarnings", "reserves"],
+  ["NetPPE", "fixedAssets"],
+  ["ConstructionInProgress", "capitalWorkInProgress"],
+  ["WorkingCapital", "workingCapital"],
+];
+
+function financialTypeName(
+  periodType: "annual" | "quarterly",
+  suffix: string,
+): string {
+  return `${periodType}${suffix}`;
+}
+
+async function fetchFinancialSeries(
+  symbol: string,
+  periodType: "annual" | "quarterly",
+): Promise<FinancialSeriesPoint[]> {
+  const period2 = Math.floor(Date.now() / 1000) + 86_400;
+  const period1 =
+    period2 -
+    (periodType === "annual" ? 7 : 4) * 365 * 86_400;
+  const types = FINANCIAL_TYPES.map(([suffix]) =>
+    financialTypeName(periodType, suffix),
+  ).join(",");
+
+  try {
+    const data = (await yfFetch(
+      `${YF_BASE2}/ws/fundamentals-timeseries/v1/finance/timeseries/` +
+        `${encodeURIComponent(symbol)}?symbol=${encodeURIComponent(symbol)}` +
+        `&type=${types}&period1=${period1}&period2=${period2}`,
+    )) as {
+      timeseries?: { result?: TimeseriesResult[] | null };
+    };
+    const pointsByDate = new Map<string, FinancialSeriesPoint>();
+
+    for (const result of data.timeseries?.result ?? []) {
+      for (const [suffix, field] of FINANCIAL_TYPES) {
+        const key = financialTypeName(periodType, suffix);
+        const points = result[key] as
+          | { asOfDate?: string; reportedValue?: { raw?: number } }[]
+          | undefined;
+        for (const point of points ?? []) {
+          if (!point.asOfDate || typeof point.reportedValue?.raw !== "number")
+            continue;
+          const current = pointsByDate.get(point.asOfDate) ?? {
+            period: periodType === "annual" ? "FY" : "Q",
+            date: point.asOfDate,
+          };
+          current[field] = point.reportedValue.raw;
+          pointsByDate.set(point.asOfDate, current);
+        }
+      }
+    }
+
+    const series = [...pointsByDate.values()]
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .map((point) => ({
+        ...point,
+        period:
+          periodType === "annual"
+            ? `FY${point.date.slice(2, 4)}`
+            : (() => {
+                const month = Number(point.date.slice(5, 7)) || 1;
+                const year = Number(point.date.slice(0, 4));
+                const fiscalQuarter =
+                  month >= 4 ? Math.ceil((month - 3) / 3) : 4;
+                const fiscalYear = month >= 4 ? year + 1 : year;
+                return `Q${fiscalQuarter} FY${String(fiscalYear).slice(-2)}`;
+              })(),
+        operatingMargin:
+          point.operatingIncome != null && point.revenue
+            ? (point.operatingIncome / point.revenue) * 100
+            : undefined,
+        netMargin:
+          point.netIncome != null && point.revenue
+            ? (point.netIncome / point.revenue) * 100
+            : undefined,
+        costOfRevenue:
+          point.revenue != null && point.grossProfit != null
+            ? point.revenue - point.grossProfit
+            : undefined,
+        inventoryDays:
+          point.inventory != null &&
+          point.revenue != null &&
+          point.grossProfit != null &&
+          point.revenue - point.grossProfit > 0
+            ? (point.inventory / (point.revenue - point.grossProfit)) * 365
+            : undefined,
+        receivableDays:
+          point.receivables != null && point.revenue != null && point.revenue > 0
+            ? (point.receivables / point.revenue) * 365
+            : undefined,
+        payableDays:
+          point.payables != null &&
+          point.revenue != null &&
+          point.grossProfit != null &&
+          point.revenue - point.grossProfit > 0
+            ? (point.payables / (point.revenue - point.grossProfit)) * 365
+            : undefined,
+      }));
+    return series;
+  } catch {
+    return [];
+  }
+}
+
+function historyPercent(
+  history: { close: number }[],
+  periodsBack: number,
+): number | undefined {
+  if (history.length <= periodsBack) return undefined;
+  const last = history[history.length - 1]?.close;
+  const base = history[history.length - 1 - periodsBack]?.close;
+  return last && base ? ((last - base) / base) * 100 : undefined;
+}
+
+export async function fetchStockInsights(symbol: string): Promise<StockInsights> {
+  const [summary, nse, annual, quarterly, stockHistory, niftyHistory] =
+    await Promise.all([
+      fetchSummary(symbol),
+      fetchNseData(symbol),
+      fetchFinancialSeries(symbol, "annual"),
+      fetchFinancialSeries(symbol, "quarterly"),
+      fetchHistory(symbol, "1y", "1d"),
+      fetchHistory("^NSEI", "1y", "1d"),
+    ]);
+
+  const stock = {
+    oneMonth: historyPercent(stockHistory, 22),
+    threeMonth: historyPercent(stockHistory, 66),
+    oneYear:
+      stockHistory.length > 1
+        ? historyPercent(stockHistory, stockHistory.length - 1)
+        : undefined,
+  };
+  const nifty50 = {
+    oneMonth: historyPercent(niftyHistory, 22),
+    threeMonth: historyPercent(niftyHistory, 66),
+    oneYear:
+      niftyHistory.length > 1
+        ? historyPercent(niftyHistory, niftyHistory.length - 1)
+        : undefined,
+  };
+
+  const metric = summary;
+  const enterpriseValue = metric.summaryDetail?.enterpriseValue?.raw;
+  const revenue =
+    metric.financialData?.totalRevenue?.raw ??
+    annual[annual.length - 1]?.revenue;
+  const ebitda =
+    metric.financialData?.ebitda?.raw ??
+    annual[annual.length - 1]?.ebitda;
+  const latestAnnual = annual[annual.length - 1];
+  const marketCap =
+    metric.summaryDetail?.marketCap?.raw ??
+    metric.price?.marketCap?.raw ??
+    (nse.marketCapCrores != null ? nse.marketCapCrores * 10_000_000 : undefined);
+  const cash = latestAnnual?.cash;
+  const debt = latestAnnual?.debt;
+  const derivedEnterpriseValue =
+    enterpriseValue ??
+    (marketCap != null && (cash != null || debt != null)
+      ? marketCap + (debt ?? 0) - (cash ?? 0)
+      : undefined);
+  const currentAssets = latestAnnual?.currentAssets;
+  const currentLiabilities = latestAnnual?.currentLiabilities;
+  const inventory = latestAnnual?.inventory;
+  const currentRatio =
+    metric.financialData?.currentRatio?.raw ??
+    (currentAssets != null && currentLiabilities
+      ? currentAssets / currentLiabilities
+      : undefined);
+  const quickRatio =
+    metric.financialData?.quickRatio?.raw ??
+    (currentAssets != null &&
+    inventory != null &&
+    currentLiabilities != null &&
+    currentLiabilities !== 0
+      ? (currentAssets - inventory) / currentLiabilities
+      : undefined);
+
+  return {
+    annual,
+    quarterly,
+    metrics: {
+      faceValue: nse.faceValue,
+      sharesOutstanding:
+        nse.sharesOutstanding ??
+        metric.defaultKeyStatistics?.sharesOutstanding?.raw,
+      deliveryPct: nse.deliveryPct,
+      annualVolatility: nse.annualVolatility,
+      vwap: nse.vwap,
+      enterpriseValue: derivedEnterpriseValue,
+      priceToSales:
+        metric.summaryDetail?.priceToSalesTrailing12Months?.raw ??
+        (marketCap != null && revenue ? marketCap / revenue : undefined),
+      evToSales:
+        derivedEnterpriseValue != null && revenue
+          ? derivedEnterpriseValue / revenue
+          : undefined,
+      evToEbitda:
+        derivedEnterpriseValue != null && ebitda
+          ? derivedEnterpriseValue / ebitda
+          : undefined,
+      marketCapToSales: marketCap != null && revenue ? marketCap / revenue : undefined,
+      bookValue: metric.summaryDetail?.bookValue?.raw,
+      heldPercentInsiders:
+        metric.defaultKeyStatistics?.heldPercentInsiders?.raw != null
+          ? metric.defaultKeyStatistics.heldPercentInsiders.raw * 100
+          : undefined,
+      heldPercentInstitutions:
+        metric.defaultKeyStatistics?.heldPercentInstitutions?.raw != null
+          ? metric.defaultKeyStatistics.heldPercentInstitutions.raw * 100
+          : undefined,
+      returnOnEquity: metric.financialData?.returnOnEquity?.raw,
+      returnOnAssets: metric.financialData?.returnOnAssets?.raw,
+      currentRatio,
+      quickRatio,
+      debtToEquity:
+        latestAnnual?.equity && latestAnnual.debt != null
+          ? latestAnnual.debt / latestAnnual.equity
+          : metric.financialData?.debtToEquity?.raw != null
+            ? metric.financialData.debtToEquity.raw / 100
+            : undefined,
+      inventoryDays: latestAnnual?.inventoryDays,
+      receivableDays: latestAnnual?.receivableDays,
+      payableDays: latestAnnual?.payableDays,
+    },
+    relativePerformance: {
+      stock,
+      nifty50,
+      vsNifty50: {
+        oneMonth:
+          stock.oneMonth != null && nifty50.oneMonth != null
+            ? stock.oneMonth - nifty50.oneMonth
+            : undefined,
+        threeMonth:
+          stock.threeMonth != null && nifty50.threeMonth != null
+            ? stock.threeMonth - nifty50.threeMonth
+            : undefined,
+        oneYear:
+          stock.oneYear != null && nifty50.oneYear != null
+            ? stock.oneYear - nifty50.oneYear
+            : undefined,
+      },
+    },
+  };
+}
+
 export async function fetchHistory(
   symbol: string,
   period: string,
@@ -547,6 +902,9 @@ export async function fetchHistory(
             close?: (number | null)[];
             volume?: (number | null)[];
           }[];
+          adjclose?: {
+            adjclose?: (number | null)[];
+          }[];
         };
       }[];
     };
@@ -555,15 +913,22 @@ export async function fetchHistory(
   if (!result) return [];
   const timestamps = result.timestamp ?? [];
   const quote = result.indicators?.quote?.[0] ?? {};
+  const adjustedCloses = result.indicators?.adjclose?.[0]?.adjclose ?? [];
   return timestamps
-    .map((ts, i) => ({
-      timestamp: ts,
-      open: quote.open?.[i] ?? 0,
-      high: quote.high?.[i] ?? 0,
-      low: quote.low?.[i] ?? 0,
-      close: quote.close?.[i] ?? 0,
-      volume: quote.volume?.[i] ?? 0,
-    }))
+    .map((ts, i) => {
+      const adjustedClose = adjustedCloses[i];
+      return {
+        timestamp: ts,
+        open: quote.open?.[i] ?? 0,
+        high: quote.high?.[i] ?? 0,
+        low: quote.low?.[i] ?? 0,
+        close: quote.close?.[i] ?? 0,
+        ...(adjustedClose != null && adjustedClose > 0
+          ? { adjustedClose }
+          : {}),
+        volume: quote.volume?.[i] ?? 0,
+      };
+    })
     .filter((c) => c.close > 0);
 }
 

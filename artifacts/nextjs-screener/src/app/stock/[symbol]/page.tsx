@@ -17,6 +17,14 @@ import {
 } from "@/lib/format";
 import { isFno } from "@/lib/fno-stocks";
 import { toast } from "sonner";
+import {
+  INSIGHT_TABS,
+  StockInsightsDashboard,
+  type BulkDeal,
+  type InsightTab,
+  type OwnershipData,
+  type StockInsights,
+} from "@/components/stock-insights";
 
 /* ─── Types ─────────────────────────────────────────────────────────────── */
 interface Quote {
@@ -33,6 +41,7 @@ interface Fundamental {
   returnOnEquity?: number; returnOnAssets?: number; grossMargins?: number;
   operatingMargins?: number; profitMargins?: number; currentRatio?: number;
   debtToEquity?: number; revenueGrowth?: number; totalRevenue?: number; freeCashflow?: number;
+  payoutRatio?: number;
   targetMeanPrice?: number; recommendationKey?: string; sector?: string; industry?: string;
   longBusinessSummary?: string; pegRatio?: number;
 }
@@ -67,8 +76,8 @@ const PERIODS = [
   { label: "1Y", value: "1y", interval: "1d" },
   { label: "5Y", value: "5y", interval: "1wk" },
 ];
-const TABS = ["Price Chart", "Volume & Delivery", "Price History", "Filings"] as const;
-type StockTab = (typeof TABS)[number];
+const TECHNICAL_VIEWS = ["Charts", "Volume & Delivery", "Price History"] as const;
+type TechnicalView = (typeof TECHNICAL_VIEWS)[number];
 
 /* ─── RSI computation ───────────────────────────────────────────────────── */
 function computeRSI(closes: number[], period = 14): (number | null)[] {
@@ -99,15 +108,6 @@ function StatRow({ label, value }: { label: string; value: string }) {
     </div>
   );
 }
-function FundCard({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-lg bg-secondary/40 border border-border/50 p-3">
-      <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">{label}</div>
-      <div className="font-bold text-sm">{value}</div>
-    </div>
-  );
-}
-
 const TOOLTIP_STYLE = {
   backgroundColor: "hsl(222,47%,10%)",
   border: "1px solid hsl(217,33%,17%)",
@@ -290,7 +290,8 @@ export default function StockPage() {
   const params = useParams();
   const rawSymbol = decodeURIComponent((params?.symbol as string | undefined) ?? "");
   const [period, setPeriod] = useState(PERIODS[2]);
-  const [activeTab, setActiveTab] = useState<StockTab>("Price Chart");
+  const [activeTab, setActiveTab] = useState<InsightTab>("Advanced Insights");
+  const [technicalView, setTechnicalView] = useState<TechnicalView>("Charts");
   const queryClient = useQueryClient();
 
   const { data: quote, isLoading: quoteLoading } = useQuery<Quote>({
@@ -304,6 +305,16 @@ export default function StockPage() {
     queryFn: () => fetch(apiUrl(`/stocks/fundamentals/${encodeURIComponent(rawSymbol)}`)).then(r => r.json()),
     enabled: !!rawSymbol,
   });
+  const {
+    data: insights,
+    isLoading: insightsLoading,
+    isError: insightsError,
+  } = useQuery<StockInsights>({
+    queryKey: ["stock", "insights", rawSymbol],
+    queryFn: () => fetch(apiUrl(`/stocks/insights/${encodeURIComponent(rawSymbol)}`)).then(r => r.json()),
+    enabled: !!rawSymbol,
+    staleTime: 5 * 60 * 1000,
+  });
   const { data: history, isLoading: historyLoading } = useQuery<HistoryPoint[]>({
     queryKey: ["stock", "history", rawSymbol, period.value],
     queryFn: () =>
@@ -313,7 +324,7 @@ export default function StockPage() {
   const { data: historyTable = [], isLoading: tableLoading } = useQuery<HistoryRow[]>({
     queryKey: ["stock", "history-table", rawSymbol],
     queryFn: () => fetch(apiUrl(`/stocks/history-table/${encodeURIComponent(rawSymbol)}`)).then(r => r.json()),
-    enabled: !!rawSymbol && activeTab === "Price History",
+    enabled: !!rawSymbol && activeTab === "Technicals" && technicalView === "Price History",
     staleTime: 10 * 60 * 1000,
   });
   const { data: stockNews = [], isLoading: newsLoading } = useQuery<NewsItem[]>({
@@ -326,6 +337,18 @@ export default function StockPage() {
     queryKey: ["stock", "filings", rawSymbol],
     queryFn: () => fetch(apiUrl(`/stocks/filings/${encodeURIComponent(rawSymbol)}`)).then(r => r.json()),
     enabled: !!rawSymbol && activeTab === "Filings",
+    staleTime: 5 * 60 * 1000,
+  });
+  const { data: ownership } = useQuery<OwnershipData>({
+    queryKey: ["stock", "ownership", rawSymbol],
+    queryFn: () => fetch(apiUrl(`/stocks/ownership/${encodeURIComponent(rawSymbol)}`)).then(r => r.json()),
+    enabled: !!rawSymbol && (activeTab === "Shareholding" || activeTab === "Promoter Activity"),
+    staleTime: 10 * 60 * 1000,
+  });
+  const { data: bulkDeals = [], isLoading: bulkDealsLoading } = useQuery<BulkDeal[]>({
+    queryKey: ["stock", "bulk-deals", rawSymbol],
+    queryFn: () => fetch(apiUrl(`/stocks/bulk-deals/${encodeURIComponent(rawSymbol)}`)).then(r => r.json()),
+    enabled: !!rawSymbol && activeTab === "Bulk Deal",
     staleTime: 5 * 60 * 1000,
   });
   const { data: watchlist } = useQuery<WatchlistItem[]>({
@@ -380,7 +403,7 @@ export default function StockPage() {
   const rangePct = high52 > low52 ? ((price - low52) / (high52 - low52)) * 100 : 50;
 
   return (
-    <div className="space-y-5 max-w-screen-xl">
+    <div className="stock-detail-page space-y-5 max-w-screen-xl">
       {/* Back */}
       <Link href="/screener" className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary transition-colors">
         <ArrowLeft className="h-3.5 w-3.5" />Back to Screener
@@ -390,7 +413,7 @@ export default function StockPage() {
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <div className="flex items-center gap-3 flex-wrap">
-            <h1 className="text-2xl font-bold tracking-tight">{displaySymbol(rawSymbol)}</h1>
+            <h1 className="stock-detail-title text-2xl font-bold tracking-tight">{displaySymbol(rawSymbol)}</h1>
             {quote?.shortName && <span className="text-base font-normal text-muted-foreground">{quote.shortName}</span>}
             {fundamentals?.sector && (
               <span className="rounded-full bg-primary/10 text-primary text-xs font-semibold px-2.5 py-0.5">{fundamentals.sector}</span>
@@ -415,8 +438,8 @@ export default function StockPage() {
       </div>
 
       {/* Price + stats */}
-      <div className="grid gap-4 lg:grid-cols-3">
-        <div className="lg:col-span-2 rounded-lg border bg-card p-5">
+        <div className="stock-detail-overview grid gap-4 lg:grid-cols-3">
+        <div className="stock-price-card lg:col-span-2 rounded-lg border bg-card p-5">
           {quoteLoading ? (
             <div className="h-24 animate-pulse bg-accent/40 rounded-lg" />
           ) : (
@@ -442,7 +465,7 @@ export default function StockPage() {
             </>
           )}
         </div>
-        <div className="rounded-lg border bg-card p-4">
+        <div className="stock-stats-card rounded-lg border bg-card p-4">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Today's Stats</h3>
           <StatRow label="Open" value={formatPrice(quote?.regularMarketOpen)} />
           <StatRow label="Prev Close" value={formatPrice(quote?.regularMarketPreviousClose)} />
@@ -460,18 +483,54 @@ export default function StockPage() {
         </div>
       </div>
 
-      {/* Chart tabs */}
-      <div className="flex gap-0.5 border-b border-border">
-        {TABS.map(t => (
-          <button key={t} onClick={() => setActiveTab(t)}
-            className={`px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px ${
-              activeTab === t ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"
-            }`}>{t}</button>
-        ))}
+      {/* Reference-style insight tabs */}
+      <div className="stock-insight-tab-rail overflow-x-auto border-b border-border" role="group" aria-label="Stock insight sections">
+        <div className="flex min-w-max gap-0.5">
+          {INSIGHT_TABS.map(t => (
+            <button key={t} onClick={() => setActiveTab(t)}
+              type="button"
+              aria-pressed={activeTab === t}
+              className={`px-3 py-2.5 text-xs font-medium transition-colors border-b-2 -mb-px whitespace-nowrap ${
+                activeTab === t ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}>{t}</button>
+          ))}
+        </div>
       </div>
 
-      {/* Price Chart tab */}
-      {activeTab === "Price Chart" && (
+      {activeTab !== "Technicals" && activeTab !== "Filings" && (
+        <StockInsightsDashboard
+          tab={activeTab}
+          insights={insights}
+          insightsLoading={insightsLoading}
+          insightsError={insightsError}
+          fundamentals={fundamentals}
+          ownership={ownership}
+          bulkDeals={bulkDeals}
+          bulkDealsLoading={bulkDealsLoading}
+          symbol={rawSymbol}
+        />
+      )}
+
+      {activeTab === "Technicals" && (
+        <div className="stock-technical-view-rail flex items-center gap-2 border-b border-border/60 pb-3 overflow-x-auto" role="group" aria-label="Technical analysis view">
+          {TECHNICAL_VIEWS.map((view) => (
+            <button
+              key={view}
+              onClick={() => setTechnicalView(view)}
+              type="button"
+              aria-pressed={technicalView === view}
+              className={`rounded-md px-3 py-1.5 text-xs font-medium whitespace-nowrap transition-colors ${
+                technicalView === view ? "bg-primary text-primary-foreground" : "bg-secondary/50 text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {view}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Technical charts */}
+      {activeTab === "Technicals" && technicalView === "Charts" && (
         <div className="space-y-4">
           <div className="rounded-lg border bg-card p-4">
             <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
@@ -521,7 +580,7 @@ export default function StockPage() {
       )}
 
       {/* Technical dashboard */}
-      {activeTab === "Price Chart" && !historyLoading && technicalData.length > 0 && (
+      {activeTab === "Technicals" && technicalView === "Charts" && !historyLoading && technicalData.length > 0 && (
         <div className="space-y-4">
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div>
@@ -640,8 +699,8 @@ export default function StockPage() {
         </div>
       )}
 
-      {/* Volume & Delivery tab */}
-      {activeTab === "Volume & Delivery" && (
+      {/* Volume & Delivery view */}
+      {activeTab === "Technicals" && technicalView === "Volume & Delivery" && (
         <div className="rounded-lg border bg-card p-4">
           <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
             <h2 className="font-semibold text-sm">{displaySymbol(rawSymbol)} — 70-DAY VOLUME ANALYSIS</h2>
@@ -674,8 +733,8 @@ export default function StockPage() {
         </div>
       )}
 
-      {/* Price History tab */}
-      {activeTab === "Price History" && (
+      {/* Price History view */}
+      {activeTab === "Technicals" && technicalView === "Price History" && (
         <div className="rounded-lg border bg-card overflow-hidden">
           <div className="px-4 py-3 border-b flex items-center justify-between">
             <span className="font-semibold text-sm">Historical Data</span>
@@ -714,56 +773,6 @@ export default function StockPage() {
                   })}
                 </tbody>
               </table>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Fundamentals */}
-      {fundamentals && (
-        <div className="space-y-4">
-          <h2 className="font-semibold">Fundamentals</h2>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-            <FundCard label="P/E (TTM)" value={formatRatio(fundamentals.trailingPE)} />
-            <FundCard label="P/E (Fwd)" value={formatRatio(fundamentals.forwardPE)} />
-            <FundCard label="PEG Ratio" value={formatRatio(fundamentals.pegRatio)} />
-            <FundCard label="Price / Book" value={formatRatio(fundamentals.priceToBook)} />
-            <FundCard label="EPS (TTM)" value={formatRatio(fundamentals.trailingEps)} />
-            <FundCard label="EPS (Fwd)" value={formatRatio(fundamentals.forwardEps)} />
-            <FundCard label="Beta" value={formatRatio(fundamentals.beta)} />
-            <FundCard label="Div Yield" value={fundamentals.dividendYield != null ? formatPercent(fundamentals.dividendYield * 100) : "—"} />
-            <FundCard label="ROE" value={fundamentals.returnOnEquity != null ? formatPercent(fundamentals.returnOnEquity * 100) : "—"} />
-            <FundCard label="ROA" value={fundamentals.returnOnAssets != null ? formatPercent(fundamentals.returnOnAssets * 100) : "—"} />
-            <FundCard label="Gross Margin" value={fundamentals.grossMargins != null ? formatPercent(fundamentals.grossMargins * 100) : "—"} />
-            <FundCard label="Net Margin" value={fundamentals.profitMargins != null ? formatPercent(fundamentals.profitMargins * 100) : "—"} />
-            <FundCard label="Current Ratio" value={formatRatio(fundamentals.currentRatio)} />
-            <FundCard label="Debt / Equity" value={fundamentals.debtToEquity != null ? formatRatio(fundamentals.debtToEquity / 100) : "—"} />
-            <FundCard label="Rev Growth" value={fundamentals.revenueGrowth != null ? formatPercent(fundamentals.revenueGrowth * 100) : "—"} />
-          </div>
-
-          {fundamentals.recommendationKey && (
-            <div className="rounded-lg border bg-card p-4 flex items-center gap-4 flex-wrap">
-              <div>
-                <p className="text-xs text-muted-foreground mb-1">Analyst Consensus</p>
-                <span className={`rounded-full px-3 py-1 text-sm font-bold uppercase tracking-wide ${
-                  fundamentals.recommendationKey === "buy" || fundamentals.recommendationKey === "strong_buy" ? "bg-green-500/10 text-green-500"
-                  : fundamentals.recommendationKey === "sell" || fundamentals.recommendationKey === "strong_sell" ? "bg-red-500/10 text-red-500"
-                  : "bg-secondary text-muted-foreground"
-                }`}>{fundamentals.recommendationKey.replace(/_/g, " ")}</span>
-              </div>
-              {fundamentals.targetMeanPrice != null && (
-                <div className="border-l pl-4">
-                  <p className="text-xs text-muted-foreground mb-1">Price Target</p>
-                  <p className="font-bold">{formatPrice(fundamentals.targetMeanPrice)}</p>
-                </div>
-              )}
-            </div>
-          )}
-
-          {fundamentals.longBusinessSummary && (
-            <div className="rounded-lg border bg-card p-4">
-              <h3 className="font-semibold text-sm mb-2">About</h3>
-              <p className="text-sm text-muted-foreground leading-relaxed line-clamp-6">{fundamentals.longBusinessSummary}</p>
             </div>
           )}
         </div>
