@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@workspace/db";
+import { db, isDatabaseConfigured } from "@workspace/db";
 import { watchlistTable } from "@workspace/db";
 import { fetchQuotes } from "@/lib/yahoo-finance";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  if (!isDatabaseConfigured()) {
+    return NextResponse.json({ error: "Database not configured" }, { status: 503 });
+  }
+
   try {
     const rows = await db.select().from(watchlistTable).orderBy(watchlistTable.addedAt);
     const symbols = rows.map((r) => r.symbol);
@@ -44,6 +48,10 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  if (!isDatabaseConfigured()) {
+    return NextResponse.json({ error: "Database not configured" }, { status: 503 });
+  }
+
   try {
     const body = (await req.json()) as { symbol?: string };
     const symbol = body.symbol?.trim();

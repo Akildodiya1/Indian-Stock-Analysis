@@ -3,9 +3,9 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "dev": "NODE_OPTIONS=--max-http-header-size=1000000 next dev --port ${PORT:-24507}",
+    "dev": "node --max-http-header-size=1000000 ./node_modules/next/dist/bin/next dev --port 24507",
     "build": "next build",
-    "start": "NODE_OPTIONS=--max-http-header-size=1000000 next start --port ${PORT:-24507}",
+    "start": "node --max-http-header-size=1000000 ./node_modules/next/dist/bin/next start --port 24507",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

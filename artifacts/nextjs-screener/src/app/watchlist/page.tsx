@@ -9,19 +9,12 @@ import { Input } from "@/components/ui/input";
 import { apiUrl } from "@/lib/api-url";
 import { formatPrice, formatChangePercent, changeColor, changeBg, displaySymbol } from "@/lib/format";
 import { toast } from "sonner";
-
-interface WatchlistItem {
-  symbol: string;
-  addedAt: string;
-  addedPrice?: number;
-  currentPrice?: number;
-  priceDiff?: number;
-  pricePct?: number;
-  regularMarketPrice?: number;
-  regularMarketChange?: number;
-  regularMarketChangePercent?: number;
-  shortName?: string;
-}
+import {
+  addWatchlistItem,
+  getWatchlist,
+  removeWatchlistItem,
+  type WatchlistItem,
+} from "@/lib/watchlist-api";
 
 export default function WatchlistPage() {
   const [searchQuery, setSearchQuery] = useState("");
@@ -29,28 +22,22 @@ export default function WatchlistPage() {
   const [isSearching, setIsSearching] = useState(false);
   const queryClient = useQueryClient();
 
-  const { data: watchlist, isLoading } = useQuery<WatchlistItem[]>({
+  const { data: watchlist, isLoading, isError, error } = useQuery<WatchlistItem[]>({
     queryKey: ["watchlist"],
-    queryFn: () => fetch(apiUrl("/watchlist")).then((r) => r.json()),
+    queryFn: getWatchlist,
     refetchInterval: 60_000,
   });
 
   const addMutation = useMutation({
-    mutationFn: (symbol: string) =>
-      fetch(apiUrl("/watchlist"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ symbol }) }).then((r) => {
-        if (!r.ok) return r.json().then((d) => Promise.reject(d));
-        return r.json();
-      }),
+    mutationFn: addWatchlistItem,
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["watchlist"] }); setSearchQuery(""); setSearchResults([]); toast.success("Added to watchlist"); },
-    onError: (err: unknown) => {
-      const msg = err && typeof err === "object" && "error" in err ? String((err as Record<string, unknown>).error) : "Failed to add";
-      toast.error(msg);
-    },
+    onError: (err: Error) => toast.error(err.message),
   });
 
   const removeMutation = useMutation({
-    mutationFn: (symbol: string) => fetch(apiUrl(`/watchlist/${encodeURIComponent(symbol)}`), { method: "DELETE" }),
+    mutationFn: removeWatchlistItem,
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["watchlist"] }); toast.success("Removed"); },
+    onError: (err: Error) => toast.error(err.message),
   });
 
   const handleSearch = async () => {
@@ -147,7 +134,11 @@ export default function WatchlistPage() {
 
       {/* Watchlist table */}
       <div className="rounded-lg border bg-card overflow-hidden">
-        {isLoading ? (
+        {isError ? (
+          <div className="p-8 text-center text-sm text-destructive" role="alert">
+            Could not load your watchlist. {error instanceof Error ? error.message : "Please try again later."}
+          </div>
+        ) : isLoading ? (
           <div className="p-8 text-center text-muted-foreground text-sm">Loading…</div>
         ) : (watchlist ?? []).length === 0 ? (
           <div className="py-20 text-center">

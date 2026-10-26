@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@workspace/db";
+import { db, isDatabaseConfigured } from "@workspace/db";
 import { portfolioTable } from "@workspace/db/schema";
 import { fetchQuotes } from "@/lib/yahoo-finance";
 
 export async function GET() {
+  if (!isDatabaseConfigured()) {
+    return NextResponse.json({ error: "Database not configured" }, { status: 503 });
+  }
+
   try {
     const holdings = await db.select().from(portfolioTable);
     if (holdings.length === 0) return NextResponse.json([]);
@@ -42,6 +46,10 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  if (!isDatabaseConfigured()) {
+    return NextResponse.json({ error: "Database not configured" }, { status: 503 });
+  }
+
   try {
     const body = (await req.json()) as {
       symbol: string;

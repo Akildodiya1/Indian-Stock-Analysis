@@ -18,6 +18,12 @@ import {
 import { isFno } from "@/lib/fno-stocks";
 import { toast } from "sonner";
 import {
+  addWatchlistItem,
+  getWatchlist,
+  removeWatchlistItem,
+  type WatchlistItem,
+} from "@/lib/watchlist-api";
+import {
   INSIGHT_TABS,
   StockInsightsDashboard,
   type BulkDeal,
@@ -51,7 +57,6 @@ interface HistoryRow {
   volume: number; change1d: number; change5d: number | null; change22d: number | null; change66d: number | null; rsi: number | null;
 }
 interface NewsItem { uuid: string; title: string; publisher: string; link: string; providerPublishTime: number; relatedTickers?: string[] }
-interface WatchlistItem { symbol: string }
 interface Filing { title: string; date: string; type: string; category: string; url?: string }
 interface TechnicalPoint {
   date: string;
@@ -124,6 +129,14 @@ function timeAgo(ts: number): string {
 function pctCell(v: number | null): string {
   if (v == null) return "—";
   return `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
+}
+
+async function fetchStockData<T>(url: string): Promise<T> {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Stock data unavailable (HTTP ${response.status})`);
+  }
+  return response.json();
 }
 
 function computeTechnicalData(
@@ -311,7 +324,7 @@ export default function StockPage() {
     isError: insightsError,
   } = useQuery<StockInsights>({
     queryKey: ["stock", "insights", rawSymbol],
-    queryFn: () => fetch(apiUrl(`/stocks/insights/${encodeURIComponent(rawSymbol)}`)).then(r => r.json()),
+    queryFn: () => fetchStockData(apiUrl(`/stocks/insights/${encodeURIComponent(rawSymbol)}`)),
     enabled: !!rawSymbol,
     staleTime: 5 * 60 * 1000,
   });
@@ -341,29 +354,31 @@ export default function StockPage() {
   });
   const { data: ownership } = useQuery<OwnershipData>({
     queryKey: ["stock", "ownership", rawSymbol],
-    queryFn: () => fetch(apiUrl(`/stocks/ownership/${encodeURIComponent(rawSymbol)}`)).then(r => r.json()),
+    queryFn: () => fetchStockData(apiUrl(`/stocks/ownership/${encodeURIComponent(rawSymbol)}`)),
     enabled: !!rawSymbol && (activeTab === "Shareholding" || activeTab === "Promoter Activity"),
     staleTime: 10 * 60 * 1000,
   });
-  const { data: bulkDeals = [], isLoading: bulkDealsLoading } = useQuery<BulkDeal[]>({
+  const { data: bulkDeals = [], isLoading: bulkDealsLoading, isError: bulkDealsError } = useQuery<BulkDeal[]>({
     queryKey: ["stock", "bulk-deals", rawSymbol],
-    queryFn: () => fetch(apiUrl(`/stocks/bulk-deals/${encodeURIComponent(rawSymbol)}`)).then(r => r.json()),
+    queryFn: () => fetchStockData(apiUrl(`/stocks/bulk-deals/${encodeURIComponent(rawSymbol)}`)),
     enabled: !!rawSymbol && activeTab === "Bulk Deal",
     staleTime: 5 * 60 * 1000,
   });
-  const { data: watchlist } = useQuery<WatchlistItem[]>({
+  const { data: watchlist, isError: watchlistError } = useQuery<WatchlistItem[]>({
     queryKey: ["watchlist"],
-    queryFn: () => fetch(apiUrl("/watchlist")).then(r => r.json()),
+    queryFn: getWatchlist,
   });
 
   const isWatched = (watchlist ?? []).some(w => w.symbol === rawSymbol);
   const addMutation = useMutation({
-    mutationFn: () => fetch(apiUrl("/watchlist"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ symbol: rawSymbol }) }),
+    mutationFn: () => addWatchlistItem(rawSymbol),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["watchlist"] }); toast.success("Added to watchlist"); },
+    onError: (error: Error) => toast.error(error.message),
   });
   const removeMutation = useMutation({
-    mutationFn: () => fetch(apiUrl(`/watchlist/${encodeURIComponent(rawSymbol)}`), { method: "DELETE" }),
+    mutationFn: () => removeWatchlistItem(rawSymbol),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["watchlist"] }); toast.success("Removed"); },
+    onError: (error: Error) => toast.error(error.message),
   });
 
   /* Chart data */
@@ -434,6 +449,7 @@ export default function StockPage() {
             {isWatched ? <StarOff className="h-4 w-4" /> : <Star className="h-4 w-4" />}
             {isWatched ? "Unwatch" : "Watchlist"}
           </Button>
+          {watchlistError && <span className="text-xs text-destructive">Watchlist unavailable</span>}
         </div>
       </div>
 
@@ -507,6 +523,7 @@ export default function StockPage() {
           ownership={ownership}
           bulkDeals={bulkDeals}
           bulkDealsLoading={bulkDealsLoading}
+          bulkDealsError={bulkDealsError}
           symbol={rawSymbol}
         />
       )}

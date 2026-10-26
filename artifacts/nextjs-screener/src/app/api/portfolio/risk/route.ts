@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { db } from "@workspace/db";
+import { db, isDatabaseConfigured } from "@workspace/db";
 import { portfolioTable } from "@workspace/db/schema";
 import { cache } from "@/lib/cache";
 import { fetchHistory, fetchQuotes } from "@/lib/yahoo-finance";
@@ -33,6 +33,10 @@ async function fetchPositionHistories(symbols: string[]) {
 }
 
 export async function GET() {
+  if (!isDatabaseConfigured()) {
+    return NextResponse.json({ error: "Database not configured" }, { status: 503 });
+  }
+
   try {
     const holdings = await db.select().from(portfolioTable);
     const signature = holdings

@@ -713,6 +713,7 @@ export function StockInsightsDashboard({
   ownership,
   bulkDeals,
   bulkDealsLoading,
+  bulkDealsError,
   symbol,
 }: {
   tab: InsightTab;
@@ -723,6 +724,7 @@ export function StockInsightsDashboard({
   ownership?: OwnershipData;
   bulkDeals?: BulkDeal[];
   bulkDealsLoading?: boolean;
+  bulkDealsError?: boolean;
   symbol: string;
 }) {
   if (!insights && tab !== "Bulk Deal") {
@@ -788,6 +790,7 @@ export function StockInsightsDashboard({
   if (tab === "Promoter Activity" && insights) return <PromoterActivityPanel ownership={ownership} />;
   if (tab === "Bulk Deal") {
     if (bulkDealsLoading) return <div className="rounded-lg border bg-card p-10 text-center text-sm text-muted-foreground">Loading NSE bulk deal records…</div>;
+    if (bulkDealsError) return <DataNotice>NSE bulk deal data is unavailable right now. Please try again shortly.</DataNotice>;
     return <BulkDealsPanel deals={bulkDeals ?? []} symbol={symbol} />;
   }
   return null;
