@@ -114,17 +114,17 @@ export async function GET(req: NextRequest) {
       };
     })
     .filter((s) => {
-      if (minPe !== null && (s.trailingPE == null || s.trailingPE < minPe))
+      if (minPe !== null && s.trailingPE != null && s.trailingPE < minPe)
         return false;
-      if (maxPe !== null && (s.trailingPE == null || s.trailingPE > maxPe))
+      if (maxPe !== null && s.trailingPE != null && s.trailingPE > maxPe)
         return false;
-      if (minPb !== null && (s.priceToBook == null || s.priceToBook < minPb))
+      if (minPb !== null && s.priceToBook != null && s.priceToBook < minPb)
         return false;
-      if (maxPb !== null && (s.priceToBook == null || s.priceToBook > maxPb))
+      if (maxPb !== null && s.priceToBook != null && s.priceToBook > maxPb)
         return false;
       if (minMarketCapCr !== null) {
         const capCr = s.marketCap != null ? s.marketCap / 1e7 : null;
-        if (capCr == null || capCr < minMarketCapCr) return false;
+        if (capCr != null && capCr < minMarketCapCr) return false;
       }
       return true;
     })

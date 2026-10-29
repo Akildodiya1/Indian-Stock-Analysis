@@ -86,9 +86,13 @@ export default function NewsPage() {
   const [activeCategory, setActiveCategory] = useState<Category>("All");
   const [sentimentFilter, setSentimentFilter] = useState<SentimentFilter>("all");
 
-  const { data: news = [], isLoading } = useQuery<NewsItem[]>({
+  const { data: news = [], isLoading, isError, error } = useQuery<NewsItem[]>({
     queryKey: ["market", "news"],
-    queryFn: () => fetch(apiUrl("/market/news")).then(r => r.json()),
+    queryFn: async () => {
+      const response = await fetch(apiUrl("/market/news"));
+      if (!response.ok) throw new Error(`Market news unavailable (HTTP ${response.status})`);
+      return response.json();
+    },
     refetchInterval: 5 * 60 * 1000,
   });
 
@@ -187,8 +191,14 @@ export default function NewsPage() {
               </div>
             ))}
           </div>
+        ) : isError ? (
+          <div className="py-16 text-center text-sm text-destructive" role="alert">
+            {error instanceof Error ? error.message : "Market news is temporarily unavailable."}
+          </div>
         ) : filtered.length === 0 ? (
-          <div className="py-16 text-center text-muted-foreground text-sm">No news in this category</div>
+          <div className="py-16 text-center text-muted-foreground text-sm">
+            {news.length === 0 ? "No market news is available right now" : "No news in this category"}
+          </div>
         ) : (
           filtered.map(item => {
             const sc = SENTIMENT_CONFIG[item.sentiment];

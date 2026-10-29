@@ -418,7 +418,7 @@ export default function StockPage() {
   const rangePct = high52 > low52 ? ((price - low52) / (high52 - low52)) * 100 : 50;
 
   return (
-    <div className="stock-detail-page space-y-5 max-w-screen-xl">
+    <div className="stock-detail-page space-y-5 max-w-7xl">
       {/* Back */}
       <Link href="/screener" className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary transition-colors">
         <ArrowLeft className="h-3.5 w-3.5" />Back to Screener

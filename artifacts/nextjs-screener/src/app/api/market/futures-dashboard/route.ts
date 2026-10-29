@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { fetchNseApi } from "@/lib/nse";
 import { cache } from "@/lib/cache";
+import {
+  calculateOptionGreeks,
+  OPTION_GREEKS_ASSUMPTIONS,
+  type OptionGreeks,
+} from "@/lib/option-greeks";
 
 export const dynamic = "force-dynamic";
 
@@ -42,6 +47,8 @@ export interface OiStrike {
   putLTP: number;
   callIV: number;
   putIV: number;
+  callGreeks: OptionGreeks | null;
+  putGreeks: OptionGreeks | null;
 }
 
 export interface FuturesDashboard {
@@ -55,6 +62,11 @@ export interface FuturesDashboard {
   maxPutOIStrike: number;
   straddle: number;
   oiStrikes: OiStrike[];
+  greeksAssumptions: {
+    model: "Black-Scholes";
+    riskFreeRate: number;
+    dividendYield: number;
+  };
 }
 
 async function fetchFuturesData(symbol: "NIFTY" | "BANKNIFTY"): Promise<FuturesDashboard> {
@@ -65,7 +77,13 @@ async function fetchFuturesData(symbol: "NIFTY" | "BANKNIFTY"): Promise<FuturesD
   const totalPutOI = raw?.filtered?.PE?.totOI ?? 0;
   const pcr = totalCallOI > 0 ? parseFloat((totalPutOI / totalCallOI).toFixed(3)) : 0;
   const spotPrice = raw?.records?.underlyingValue ?? 0;
-  const expiry = raw?.records?.expiryDates?.[0] ?? "";
+  const expiry =
+    raw?.records?.expiryDates?.find(
+      (date) => Date.parse(date) >= new Date().setHours(0, 0, 0, 0),
+    ) ?? "";
+  if (rows.length === 0 || spotPrice <= 0 || !expiry) {
+    throw new Error(`NSE returned incomplete ${symbol} option-chain data`);
+  }
 
   let maxCallOI = 0, maxCallOIStrike = 0;
   let maxPutOI = 0, maxPutOIStrike = 0;
@@ -85,6 +103,20 @@ async function fetchFuturesData(symbol: "NIFTY" | "BANKNIFTY"): Promise<FuturesD
       putLTP: row.PE?.lastPrice ?? 0,
       callIV: row.CE?.impliedVolatility ?? 0,
       putIV: row.PE?.impliedVolatility ?? 0,
+      callGreeks: calculateOptionGreeks(
+        spotPrice,
+        row.strikePrice ?? 0,
+        row.CE?.impliedVolatility ?? 0,
+        expiry,
+        "call",
+      ),
+      putGreeks: calculateOptionGreeks(
+        spotPrice,
+        row.strikePrice ?? 0,
+        row.PE?.impliedVolatility ?? 0,
+        expiry,
+        "put",
+      ),
     };
   });
 
@@ -106,48 +138,22 @@ async function fetchFuturesData(symbol: "NIFTY" | "BANKNIFTY"): Promise<FuturesD
     maxPutOIStrike,
     straddle,
     oiStrikes: oiStrikes.slice(0, 30), // 15 strikes above + below ATM
-  };
-}
-
-function mockFutures(symbol: string, spot: number): FuturesDashboard {
-  const strikes = Array.from({ length: 20 }, (_, i) => Math.round(spot / 100) * 100 - 1000 + i * 100);
-  const atm = Math.round(spot / 100) * 100;
-  const oiStrikes: OiStrike[] = strikes.map((s) => {
-    const dist = Math.abs(s - atm) / 100;
-    const baseCallOI = Math.round(Math.max(1000000, 8000000 - dist * 500000 + Math.random() * 500000));
-    const basePutOI = Math.round(Math.max(1000000, 7000000 - dist * 400000 + Math.random() * 400000));
-    return { strike: s, callOI: baseCallOI, putOI: basePutOI, callOIChange: Math.round((Math.random() - 0.5) * 200000), putOIChange: Math.round((Math.random() - 0.5) * 150000), callLTP: parseFloat(Math.max(5, (atm + 200 - s) * 0.8).toFixed(2)), putLTP: parseFloat(Math.max(5, (s - atm + 200) * 0.8).toFixed(2)), callIV: parseFloat((14 + dist * 0.5 + Math.random()).toFixed(2)), putIV: parseFloat((15 + dist * 0.5 + Math.random()).toFixed(2)) };
-  });
-  const maxCall = oiStrikes.reduce((m, s) => s.callOI > m.callOI ? s : m, oiStrikes[0]);
-  const maxPut = oiStrikes.reduce((m, s) => s.putOI > m.putOI ? s : m, oiStrikes[0]);
-  const totalCall = oiStrikes.reduce((t, s) => t + s.callOI, 0);
-  const totalPut = oiStrikes.reduce((t, s) => t + s.putOI, 0);
-  const atmRow = oiStrikes.find((s) => s.strike === atm) ?? oiStrikes[10];
-  return {
-    symbol,
-    spotPrice: spot,
-    expiry: "31-Jul-2025",
-    pcr: parseFloat((totalPut / totalCall).toFixed(3)),
-    totalCallOI: totalCall,
-    totalPutOI: totalPut,
-    maxCallOIStrike: maxCall?.strike ?? 0,
-    maxPutOIStrike: maxPut?.strike ?? 0,
-    straddle: parseFloat(((atmRow?.callLTP ?? 0) + (atmRow?.putLTP ?? 0)).toFixed(2)),
-    oiStrikes,
+    greeksAssumptions: OPTION_GREEKS_ASSUMPTIONS,
   };
 }
 
 export async function GET() {
   try {
-    const [nifty, bankNifty] = await cache.getOrSet("market:futures-dashboard", async () => {
+    const [nifty, bankNifty] = await cache.getOrSet("market:futures-dashboard:v2", async () => {
       const [n, b] = await Promise.all([fetchFuturesData("NIFTY"), fetchFuturesData("BANKNIFTY")]);
       return [n, b];
     }, 2 * 60 * 1000);
     return NextResponse.json({ nifty, bankNifty });
-  } catch {
-    return NextResponse.json({
-      nifty: mockFutures("NIFTY", 23767),
-      bankNifty: mockFutures("BANKNIFTY", 52800),
-    });
+  } catch (error) {
+    console.error("NSE option-chain data is unavailable", error);
+    return NextResponse.json(
+      { error: "NSE option-chain data is temporarily unavailable" },
+      { status: 502 },
+    );
   }
 }

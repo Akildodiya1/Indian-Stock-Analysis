@@ -37,6 +37,7 @@ interface Holding {
   pnlPct: number | null;
   cagr: number | null;
   regularMarketChangePercent: number | null;
+  quoteUnavailable: boolean;
 }
 
 interface SearchResult { symbol: string; shortname: string; exchDisp: string }
@@ -68,11 +69,39 @@ export default function PortfolioPage() {
   const [selected, setSelected] = useState<SearchResult | null>(null);
   const [form, setForm] = useState({ quantity: "", avgPrice: "", purchaseDate: "", notes: "" });
 
-  const { data: holdings = [], isLoading } = useQuery<Holding[]>({
+  const {
+    data: holdingsData,
+    isLoading,
+    isError: holdingsError,
+    error: holdingsQueryError,
+  } = useQuery<Holding[]>({
     queryKey: ["portfolio"],
-    queryFn: () => fetch(apiUrl("/portfolio")).then(r => r.json()),
+    queryFn: async () => {
+      const response = await fetch(apiUrl("/portfolio"));
+      const body: unknown = await response.json();
+      if (!response.ok) {
+        const message =
+          typeof body === "object" &&
+          body !== null &&
+          "error" in body &&
+          typeof body.error === "string"
+            ? body.error
+            : `Portfolio service unavailable (HTTP ${response.status})`;
+        if (response.status === 503 && message === "Database not configured") {
+          throw new Error(
+            "Database not configured. Set DATABASE_URL, run `pnpm --filter @workspace/db push`, and restart the app.",
+          );
+        }
+        throw new Error(message);
+      }
+      if (!Array.isArray(body)) {
+        throw new Error("Portfolio API returned invalid data");
+      }
+      return body as Holding[];
+    },
     refetchInterval: 60_000,
   });
+  const holdings = holdingsData ?? [];
   const {
     data: riskData,
     isLoading: isRiskLoading,
@@ -94,25 +123,47 @@ export default function PortfolioPage() {
   });
 
   const addMutation = useMutation({
-    mutationFn: (body: object) =>
-      fetch(apiUrl("/portfolio"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
-        .then(r => r.ok ? r.json() : r.json().then(d => Promise.reject(d))),
+    mutationFn: async (body: object) => {
+      const response = await fetch(apiUrl("/portfolio"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        throw new Error(
+          result.error ?? `Failed to add holding (HTTP ${response.status})`,
+        );
+      }
+      return result;
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["portfolio"] });
       qc.invalidateQueries({ queryKey: ["portfolio-risk"] });
       setShowAdd(false); setSelected(null); setForm({ quantity: "", avgPrice: "", purchaseDate: "", notes: "" });
       toast.success("Holding added");
     },
-    onError: (e: unknown) => toast.error(typeof e === "object" && e && "error" in e ? String((e as { error: unknown }).error) : "Failed"),
+    onError: (error: Error) => toast.error(error.message),
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: number) => fetch(apiUrl(`/portfolio/${id}`), { method: "DELETE" }),
+    mutationFn: async (id: number) => {
+      const response = await fetch(apiUrl(`/portfolio/${id}`), {
+        method: "DELETE",
+      });
+      if (!response.ok) {
+        const body = await response.json();
+        throw new Error(
+          body.error ?? `Failed to remove holding (HTTP ${response.status})`,
+        );
+      }
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["portfolio"] });
       qc.invalidateQueries({ queryKey: ["portfolio-risk"] });
       toast.success("Removed");
     },
+    onError: (error: Error) => toast.error(error.message),
   });
 
   const handleSearch = async () => {
@@ -134,11 +185,19 @@ export default function PortfolioPage() {
 
   // Portfolio calculations
   const totalInvested = holdings.reduce((s, h) => s + h.invested, 0);
-  const totalCurrent = holdings.reduce((s, h) => s + (h.currentValue ?? h.invested), 0);
-  const totalPnl = totalCurrent - totalInvested;
-  const totalPnlPct = totalInvested > 0 ? (totalPnl / totalInvested) * 100 : 0;
+  const quotesComplete = holdings.every((holding) => !holding.quoteUnavailable);
+  const totalCurrent = quotesComplete
+    ? holdings.reduce((sum, holding) => sum + (holding.currentValue ?? 0), 0)
+    : null;
+  const totalPnl = totalCurrent == null ? null : totalCurrent - totalInvested;
+  const totalPnlPct =
+    totalPnl != null && totalInvested > 0 ? (totalPnl / totalInvested) * 100 : null;
 
   // Allocation by exchange/sector
+  const allocationTotal = holdings.reduce(
+    (sum, holding) => sum + (holding.currentValue ?? holding.invested),
+    0,
+  );
   const sectorMap: Record<string, number> = {};
   for (const h of holdings) {
     const sector = h.exchange || "Other";
@@ -170,18 +229,39 @@ export default function PortfolioPage() {
           </h1>
           <p className="text-sm text-muted-foreground mt-0.5">Track holdings, P&L, and risk metrics in INR</p>
         </div>
-        <Button size="sm" onClick={() => setShowAdd(v => !v)}>
+        <Button size="sm" onClick={() => setShowAdd(v => !v)} disabled={holdingsError}>
           {showAdd ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
           {showAdd ? "Cancel" : "Add Holding"}
         </Button>
       </div>
 
+      {holdingsError && (
+        <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive" role="alert">
+          {holdingsQueryError instanceof Error
+            ? holdingsQueryError.message
+            : "Portfolio data is unavailable."}
+        </div>
+      )}
+
+      {!holdingsError && holdings.some((holding) => holding.quoteUnavailable) && (
+        <div className="rounded-lg border bg-muted/30 p-4 text-sm text-muted-foreground" role="status">
+          Some live quotes are unavailable. Saved holdings are shown, but portfolio value and P&amp;L are hidden until quotes return.
+        </div>
+      )}
+
       {/* Summary cards */}
       <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
-        {statCard("Total Invested", fmtL(totalInvested))}
-        {statCard("Current Value", fmtL(totalCurrent))}
-        {statCard("Total P&L", fmtL(totalPnl), `${totalPnlPct >= 0 ? "+" : ""}${fmt(totalPnlPct)}%`, totalPnl >= 0 ? "text-green-500" : "text-red-500")}
-        {statCard("Holdings", String(holdings.length))}
+        {statCard("Total Invested", holdingsError ? "—" : fmtL(totalInvested))}
+        {statCard("Current Value", holdingsError ? "—" : fmtL(totalCurrent))}
+        {statCard(
+          "Total P&L",
+          holdingsError ? "—" : fmtL(totalPnl),
+          holdingsError || totalPnlPct == null
+            ? undefined
+            : `${totalPnlPct >= 0 ? "+" : ""}${fmt(totalPnlPct)}%`,
+          totalPnl == null ? undefined : totalPnl >= 0 ? "text-green-500" : "text-red-500",
+        )}
+        {statCard("Holdings", holdingsError ? "—" : String(holdings.length))}
       </div>
 
       {/* Add holding */}
@@ -255,6 +335,12 @@ export default function PortfolioPage() {
           </div>
           {isLoading ? (
             <div className="p-8 text-center text-muted-foreground text-sm">Loading…</div>
+          ) : holdingsError ? (
+            <div className="p-8 text-center text-sm text-destructive" role="alert">
+              {holdingsQueryError instanceof Error
+                ? holdingsQueryError.message
+                : "Portfolio data is unavailable."}
+            </div>
           ) : holdings.length === 0 ? (
             <div className="py-20 text-center">
               <Briefcase className="h-10 w-10 text-muted-foreground/20 mx-auto mb-3" />
@@ -376,7 +462,7 @@ export default function PortfolioPage() {
             <h3 className="font-semibold text-sm mb-4">Holdings Breakdown</h3>
             <div className="space-y-2">
               {holdings.map(h => {
-                const weight = totalCurrent > 0 ? ((h.currentValue ?? h.invested) / totalCurrent) * 100 : 0;
+                const weight = allocationTotal > 0 ? ((h.currentValue ?? h.invested) / allocationTotal) * 100 : 0;
                 return (
                   <div key={h.id} className="flex items-center gap-3">
                     <div className="flex-1 min-w-0">
@@ -395,11 +481,15 @@ export default function PortfolioPage() {
             <div className="mt-4 pt-3 border-t space-y-2">
               <div className="flex justify-between text-xs">
                 <span className="text-muted-foreground">P&L</span>
-                <span className={changeColor(totalPnl)}>{totalPnl >= 0 ? "+" : ""}₹{fmt(totalPnl, 0)}</span>
+                <span className={totalPnl == null ? "text-muted-foreground" : changeColor(totalPnl)}>
+                  {totalPnl == null ? "—" : `${totalPnl >= 0 ? "+" : ""}₹${fmt(totalPnl, 0)}`}
+                </span>
               </div>
               <div className="flex justify-between text-xs">
                 <span className="text-muted-foreground">Overall Return</span>
-                <span className={changeColor(totalPnlPct)}>{totalPnlPct >= 0 ? "+" : ""}{fmt(totalPnlPct)}%</span>
+                <span className={totalPnlPct == null ? "text-muted-foreground" : changeColor(totalPnlPct)}>
+                  {totalPnlPct == null ? "—" : `${totalPnlPct >= 0 ? "+" : ""}${fmt(totalPnlPct)}%`}
+                </span>
               </div>
             </div>
           </div>

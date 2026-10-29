@@ -13,6 +13,7 @@ node_modules
 
 # Next.js build output
 .next/
+artifacts/nextjs-screener/.env.local
 
 # IDEs and editors
 /.idea

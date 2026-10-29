@@ -25,9 +25,13 @@ interface MarketBreadthData {
 }
 
 export default function MarketBreadthPage() {
-  const { data, isLoading } = useQuery<MarketBreadthData>({
+  const { data, isLoading, isError, error } = useQuery<MarketBreadthData>({
     queryKey: ["market", "market-breadth"],
-    queryFn: () => fetch(apiUrl("/market/market-breadth")).then(r => r.json()),
+    queryFn: async () => {
+      const response = await fetch(apiUrl("/market/market-breadth"));
+      if (!response.ok) throw new Error(`Market breadth unavailable (HTTP ${response.status})`);
+      return response.json();
+    },
     refetchInterval: 60_000,
   });
 
@@ -43,14 +47,16 @@ export default function MarketBreadthPage() {
     );
   }
 
-  if (!data) {
+  if (isError || !data) {
     return (
       <div className="space-y-6 max-w-screen-xl mx-auto">
         <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
           <Gauge className="h-6 w-6 text-primary" />
           Market Breadth
         </h1>
-        <div className="text-center py-16 text-muted-foreground text-sm">No data available</div>
+        <div className="text-center py-16 text-destructive text-sm" role="alert">
+          {error instanceof Error ? error.message : "Market breadth data is temporarily unavailable."}
+        </div>
       </div>
     );
   }

@@ -15,20 +15,32 @@ interface OiStrike {
   callOIChange: number; putOIChange: number;
   callLTP: number; putLTP: number;
   callIV: number; putIV: number;
+  callGreeks: OptionGreeks | null;
+  putGreeks: OptionGreeks | null;
+}
+interface OptionGreeks {
+  delta: number; gamma: number; theta: number; vega: number; rho: number;
 }
 interface FuturesDashboard {
   symbol: string; spotPrice: number; expiry: string;
   pcr: number; totalCallOI: number; totalPutOI: number;
   maxCallOIStrike: number; maxPutOIStrike: number;
   straddle: number; oiStrikes: OiStrike[];
+  greeksAssumptions: {
+    model: string; riskFreeRate: number; dividendYield: number;
+  };
 }
 
 export default function FuturesPage() {
   const [symbol, setSymbol] = useState<"nifty" | "bankNifty">("nifty");
 
-  const { data, isLoading } = useQuery<{ nifty: FuturesDashboard, bankNifty: FuturesDashboard }>({
+  const { data, isLoading, isError, error } = useQuery<{ nifty: FuturesDashboard, bankNifty: FuturesDashboard }>({
     queryKey: ["market", "futures-dashboard"],
-    queryFn: () => fetch(apiUrl("/market/futures-dashboard")).then(r => r.json()),
+    queryFn: async () => {
+      const response = await fetch(apiUrl("/market/futures-dashboard"));
+      if (!response.ok) throw new Error(`NSE option-chain data unavailable (HTTP ${response.status})`);
+      return response.json();
+    },
     refetchInterval: 60_000,
   });
 
@@ -53,8 +65,10 @@ export default function FuturesPage() {
 
       {isLoading ? (
         <div className="text-center py-16 text-muted-foreground text-sm">Loading...</div>
-      ) : !dashboard ? (
-        <div className="text-center py-16 text-muted-foreground text-sm">No data available</div>
+      ) : isError || !dashboard ? (
+        <div className="text-center py-16 text-destructive text-sm" role="alert">
+          {error instanceof Error ? error.message : "NSE option-chain data is temporarily unavailable."}
+        </div>
       ) : (
         <>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
@@ -103,6 +117,9 @@ export default function FuturesPage() {
           </Card>
 
           <Card className="overflow-hidden">
+            <div className="px-4 pt-4 text-xs text-muted-foreground">
+              Black-Scholes estimates · risk-free rate {(dashboard.greeksAssumptions.riskFreeRate * 100).toFixed(1)}% · dividend yield {(dashboard.greeksAssumptions.dividendYield * 100).toFixed(1)}% · theta per day · vega/rho per 1%
+            </div>
             <Table>
               <TableHeader>
                 <TableRow className="bg-muted/30">
@@ -110,7 +127,17 @@ export default function FuturesPage() {
                   <TableHead className="text-center">Call Change</TableHead>
                   <TableHead className="text-center">Call LTP</TableHead>
                   <TableHead className="text-center">Call IV</TableHead>
+                  <TableHead className="text-center">Call Delta</TableHead>
+                  <TableHead className="text-center">Call Gamma</TableHead>
+                  <TableHead className="text-center">Call Theta</TableHead>
+                  <TableHead className="text-center">Call Vega</TableHead>
+                  <TableHead className="text-center">Call Rho</TableHead>
                   <TableHead className="text-center font-bold border-x border-border">Strike</TableHead>
+                  <TableHead className="text-center">Put Delta</TableHead>
+                  <TableHead className="text-center">Put Gamma</TableHead>
+                  <TableHead className="text-center">Put Theta</TableHead>
+                  <TableHead className="text-center">Put Vega</TableHead>
+                  <TableHead className="text-center">Put Rho</TableHead>
                   <TableHead className="text-center">Put IV</TableHead>
                   <TableHead className="text-center">Put LTP</TableHead>
                   <TableHead className="text-center">Put Change</TableHead>
@@ -132,9 +159,19 @@ export default function FuturesPage() {
                       </TableCell>
                       <TableCell className="text-center font-mono text-xs">{strike.callLTP.toFixed(1)}</TableCell>
                       <TableCell className="text-center font-mono text-xs">{strike.callIV.toFixed(1)}</TableCell>
+                      <TableCell className="text-center font-mono text-xs">{formatGreek(strike.callGreeks?.delta, 3)}</TableCell>
+                      <TableCell className="text-center font-mono text-xs">{formatGreek(strike.callGreeks?.gamma, 5)}</TableCell>
+                      <TableCell className="text-center font-mono text-xs">{formatGreek(strike.callGreeks?.theta, 2)}</TableCell>
+                      <TableCell className="text-center font-mono text-xs">{formatGreek(strike.callGreeks?.vega, 2)}</TableCell>
+                      <TableCell className="text-center font-mono text-xs">{formatGreek(strike.callGreeks?.rho, 2)}</TableCell>
                       
                       <TableCell className="text-center font-bold bg-muted/10 border-x border-border tabular-nums text-sm">{strike.strike}</TableCell>
                       
+                      <TableCell className="text-center font-mono text-xs">{formatGreek(strike.putGreeks?.delta, 3)}</TableCell>
+                      <TableCell className="text-center font-mono text-xs">{formatGreek(strike.putGreeks?.gamma, 5)}</TableCell>
+                      <TableCell className="text-center font-mono text-xs">{formatGreek(strike.putGreeks?.theta, 2)}</TableCell>
+                      <TableCell className="text-center font-mono text-xs">{formatGreek(strike.putGreeks?.vega, 2)}</TableCell>
+                      <TableCell className="text-center font-mono text-xs">{formatGreek(strike.putGreeks?.rho, 2)}</TableCell>
                       <TableCell className="text-center font-mono text-xs">{strike.putIV.toFixed(1)}</TableCell>
                       <TableCell className="text-center font-mono text-xs">{strike.putLTP.toFixed(1)}</TableCell>
                       <TableCell className={`text-center font-mono text-xs ${changeColor(strike.putOIChange)}`}>
@@ -153,4 +190,8 @@ export default function FuturesPage() {
       )}
     </div>
   );
+}
+
+function formatGreek(value: number | undefined, decimals: number): string {
+  return value != null && Number.isFinite(value) ? value.toFixed(decimals) : "—";
 }

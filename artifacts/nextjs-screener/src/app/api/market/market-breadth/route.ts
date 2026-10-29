@@ -23,6 +23,9 @@ async function computeMarketBreadth() {
     fetchQuotes(symbols),
     fetchHistory("^NSEI", "1y", "1d"),
   ]);
+  if (quotes.length === 0 || niftyHist.length === 0) {
+    throw new Error("Market breadth source returned no quote or index history data");
+  }
 
   // Advance / Decline
   let advances = 0, declines = 0, unchanged = 0;
@@ -112,13 +115,11 @@ export async function GET() {
   try {
     const data = await cache.getOrSet("market:market-breadth", computeMarketBreadth, 3 * 60 * 1000);
     return NextResponse.json(data);
-  } catch {
-    return NextResponse.json({
-      total: 100,
-      advanceDecline: { advances: 55, declines: 40, unchanged: 5, ratio: 1.38 },
-      fiftyTwoWeek: { at52wHigh: 8, near52wHigh: 14, near52wLow: 3, at52wLow: 1 },
-      momentum: { strongUp: 12, strongDown: 8, topGainers: [], topLosers: [] },
-      niftyEma: { price: 23767, ema20: 23500, ema50: 23200, ema200: 22000, aboveEma20: true, aboveEma50: true, aboveEma200: true },
-    });
+  } catch (error) {
+    console.error("Market breadth is unavailable", error);
+    return NextResponse.json(
+      { error: "Market breadth data is temporarily unavailable" },
+      { status: 502 },
+    );
   }
 }

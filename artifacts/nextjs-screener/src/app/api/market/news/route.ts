@@ -4,9 +4,13 @@ import { cache } from "@/lib/cache";
 
 export async function GET() {
   try {
-    const news = await cache.getOrSet("market:news", () => fetchMarketNews(30), 5 * 60 * 1000);
+    const news = await cache.getOrSet("market:news:v2", () => fetchMarketNews(30), 5 * 60 * 1000);
     return NextResponse.json(news);
-  } catch {
-    return NextResponse.json([], { status: 200 });
+  } catch (error) {
+    console.error("Market news is unavailable", error);
+    return NextResponse.json(
+      { error: "Market news is temporarily unavailable" },
+      { status: 502 },
+    );
   }
 }

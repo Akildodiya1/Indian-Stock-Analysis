@@ -11,14 +11,30 @@ export interface WatchlistItem {
   regularMarketChange?: number;
   regularMarketChangePercent?: number;
   shortName?: string;
+  quoteUnavailable?: boolean;
 }
 
 async function expectOk(response: Response): Promise<void> {
   if (!response.ok) {
-    if (response.status === 503) {
-      throw new Error("Watchlist database is not configured or unavailable (HTTP 503)");
+    let message = `Watchlist service unavailable (HTTP ${response.status})`;
+    try {
+      const body: unknown = await response.json();
+      if (
+        typeof body === "object" &&
+        body !== null &&
+        "error" in body &&
+        typeof body.error === "string"
+      ) {
+        message = body.error;
+      }
+    } catch {
+      // Keep the HTTP status message when the server does not return JSON.
     }
-    throw new Error(`Watchlist service unavailable (HTTP ${response.status})`);
+    if (response.status === 503 && message === "Database not configured") {
+      message =
+        "Database not configured. Set DATABASE_URL, run `pnpm --filter @workspace/db push`, and restart the app.";
+    }
+    throw new Error(message);
   }
 }
 

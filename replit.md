@@ -10,6 +10,59 @@ A full-stack Next.js 15 App Router app for Indian stock market analytics. Covers
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
 - Required env: `DATABASE_URL` — Postgres connection string
 
+### Deploy to Netlify
+
+Connect the repository to Netlify with the repository root as the base directory.
+The root `netlify.toml` builds the Next.js screener workspace and enables Netlify's
+Next.js runtime for its server-rendered pages and API routes. Do not set the base
+directory to `artifacts/nextjs-screener`; the app depends on workspace packages at
+the repository root.
+
+Set `DATABASE_URL` in Netlify's production environment to a reachable, persistent
+PostgreSQL database, then apply the Drizzle schema with
+`pnpm --filter @workspace/db run push` using that database URL. The local
+`.env.local` file and local development database are not deployed to Netlify.
+
+### Configure PostgreSQL for Watchlist and Portfolio
+
+The watchlist and portfolio are stored in PostgreSQL. Create a PostgreSQL database,
+then set `DATABASE_URL` in the environment used to start the Next.js server. Do not
+commit the connection string to source control.
+
+On Windows PowerShell, set the connection string in the same terminal used to run
+the schema push and app:
+
+```powershell
+$env:DATABASE_URL = "postgresql://USERNAME:PASSWORD@localhost:5432/fintrack"
+pnpm --filter @workspace/db run push
+pnpm --filter @workspace/nextjs-screener run dev
+```
+
+Replace `USERNAME` and `PASSWORD` with a PostgreSQL role that can create tables,
+and create the `fintrack` database first. For a hosted database, use the provider's
+connection string, including any required SSL options. The database must be
+reachable before running `push`; it creates or updates the tables defined by the
+Drizzle schema. For deployments, configure `DATABASE_URL` in the hosting provider's
+server environment and run the schema push as a deployment step. Watchlist and
+Portfolio APIs return HTTP 503 when the variable is missing.
+
+For this Windows development environment, a local PostgreSQL cluster is provisioned
+under `%LOCALAPPDATA%\FinTrack\postgres-data`, bound to `127.0.0.1:5433`. Its
+connection string is stored in the ignored
+`artifacts/nextjs-screener/.env.local`; the Drizzle schema has already been pushed.
+After a machine restart, start the database before the app if it is not already
+running:
+
+```powershell
+$pgctl = "C:\Program Files\PostgreSQL\18\bin\pg_ctl.exe"
+& $pgctl -D "$env:LOCALAPPDATA\FinTrack\postgres-data" status
+& $pgctl -D "$env:LOCALAPPDATA\FinTrack\postgres-data" -l "$env:LOCALAPPDATA\FinTrack\postgres.log" start
+pnpm --filter @workspace/nextjs-screener run dev
+```
+
+The database uses a separate cluster and port from any PostgreSQL service already
+installed on the machine.
+
 ## Stack
 
 - pnpm workspaces, Node.js 24, TypeScript 5.9

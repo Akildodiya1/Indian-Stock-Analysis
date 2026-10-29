@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db, isDatabaseConfigured } from "@workspace/db";
 import { portfolioTable } from "@workspace/db/schema";
 import { fetchQuotes } from "@/lib/yahoo-finance";
+import { validatePortfolioInput } from "@/lib/portfolio-validation";
 
 export async function GET() {
   if (!isDatabaseConfigured()) {
@@ -12,7 +13,12 @@ export async function GET() {
     const holdings = await db.select().from(portfolioTable);
     if (holdings.length === 0) return NextResponse.json([]);
     const symbols = [...new Set(holdings.map((h) => h.symbol))];
-    const quotes = await fetchQuotes(symbols);
+    let quotes: Awaited<ReturnType<typeof fetchQuotes>> = [];
+    try {
+      quotes = await fetchQuotes(symbols);
+    } catch (err) {
+      console.error("portfolio quote fetch failed; returning saved holdings without quotes", err);
+    }
     const quoteMap = new Map(quotes.map((q) => [q.symbol, q]));
     const result = holdings.map((h) => {
       const q = quoteMap.get(h.symbol);
@@ -36,6 +42,7 @@ export async function GET() {
         pnlPct,
         cagr,
         regularMarketChangePercent: q?.regularMarketChangePercent,
+        quoteUnavailable: currentPrice == null,
       };
     });
     return NextResponse.json(result);
@@ -51,29 +58,19 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const body = (await req.json()) as {
-      symbol: string;
-      name?: string;
-      exchange?: string;
-      quantity: number;
-      avgPrice: number;
-      purchaseDate?: string;
-      notes?: string;
-    };
-    if (!body.symbol || !body.quantity || !body.avgPrice) {
-      return NextResponse.json({ error: "symbol, quantity, avgPrice required" }, { status: 400 });
+    let body: unknown;
+    try {
+      body = await req.json();
+    } catch {
+      return NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 });
+    }
+    const validation = validatePortfolioInput(body);
+    if ("error" in validation) {
+      return NextResponse.json({ error: validation.error }, { status: 400 });
     }
     const [inserted] = await db
       .insert(portfolioTable)
-      .values({
-        symbol: body.symbol.toUpperCase(),
-        name: body.name ?? body.symbol,
-        exchange: body.exchange ?? "NSE",
-        quantity: body.quantity,
-        avgPrice: body.avgPrice,
-        purchaseDate: body.purchaseDate ?? null,
-        notes: body.notes ?? null,
-      })
+      .values(validation.value)
       .returning();
     return NextResponse.json(inserted, { status: 201 });
   } catch (err) {
