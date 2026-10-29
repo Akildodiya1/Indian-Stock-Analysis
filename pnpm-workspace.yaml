@@ -157,4 +157,8 @@ overrides:
   rollup>@rollup/rollup-win32-x64-msvc: '-'
 
 allowBuilds:
+  '@swc/core': true
   esbuild: true
+  msw: true
+  sharp: true
+  unrs-resolver: true
