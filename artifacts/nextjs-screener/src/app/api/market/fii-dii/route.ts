@@ -37,31 +37,30 @@ async function fetchFiiDii() {
 
   if (!res.ok) throw new Error(`NSE FII/DII: ${res.status}`);
   const raw = await res.json() as FiiDiiRecord[];
+  if (!Array.isArray(raw)) throw new Error("Unexpected NSE FII/DII response format");
 
-  return raw.map(r => ({
-    category: r.category?.replace("*", "").trim() ?? "—",
-    buyValue: parseFloat(r.buyValue?.replace(/,/g, "") ?? "0"),
-    sellValue: parseFloat(r.sellValue?.replace(/,/g, "") ?? "0"),
-    netValue: parseFloat(r.netValue?.replace(/,/g, "") ?? "0"),
-    date: r.date ?? null,
-  }));
-}
-
-// Fallback mock for when NSE is blocked
-function mockFiiDii() {
-  const today = new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
-  return [
-    { category: "FII/FPI", buyValue: 14523.45, sellValue: 12876.30, netValue: 1647.15, date: today },
-    { category: "DII", buyValue: 9854.22, sellValue: 11203.67, netValue: -1349.45, date: today },
-  ];
+  return raw.map((record) => {
+    const parseValue = (value: string) => {
+      const parsed = Number.parseFloat(value.replace(/,/g, ""));
+      if (!Number.isFinite(parsed)) throw new Error("Invalid NSE FII/DII numeric value");
+      return parsed;
+    };
+    return {
+      category: record.category?.replace("*", "").trim() ?? "—",
+      buyValue: parseValue(record.buyValue),
+      sellValue: parseValue(record.sellValue),
+      netValue: parseValue(record.netValue),
+      date: record.date ?? null,
+    };
+  });
 }
 
 export async function GET() {
   try {
     const data = await cache.getOrSet("market:fii-dii", () => fetchFiiDii(), 10 * 60 * 1000);
     return NextResponse.json(data);
-  } catch {
-    // Return mock data when NSE blocks the request
-    return NextResponse.json(mockFiiDii());
+  } catch (error) {
+    console.error("FII/DII data is unavailable", error);
+    return NextResponse.json({ error: "FII/DII data is temporarily unavailable" }, { status: 502 });
   }
 }

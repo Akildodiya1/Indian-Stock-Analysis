@@ -26,6 +26,7 @@ export const INSIGHT_TABS = [
   "Balance Sheet",
   "Cashflow",
   "Shareholding",
+  "Corporate Actions",
   "Filings",
   "Bulk Deal",
   "Promoter Activity",

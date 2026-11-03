@@ -43,7 +43,7 @@ async function fetchFilings(fromDate: string, toDate: string): Promise<FilingRec
     `corporate-announcements?index=equities&from_date=${encodeURIComponent(fromDate)}&to_date=${encodeURIComponent(toDate)}`
   );
   if (!Array.isArray(raw)) throw new Error("Unexpected filings format");
-  return raw.slice(0, 200).map((r) => ({
+  return raw.map((r) => ({
     symbol: r.symbol ?? "",
     company: r.sm_name ?? r.comp ?? r.symbol ?? "",
     category: categorise(r.subject ?? r.desc ?? ""),
@@ -53,17 +53,6 @@ async function fetchFilings(fromDate: string, toDate: string): Promise<FilingRec
       ? `https://www.nseindia.com/corporate/Notice_${r.attchmntFile}`
       : null,
   }));
-}
-
-function mockFilings(): FilingRecord[] {
-  const d = nseDate();
-  return [
-    { symbol: "RELIANCE", company: "Reliance Industries", category: "Board Meeting", subject: "Reg 30 - Outcome of Board Meeting - Financial Results", date: `${d} 16:00:00`, attachmentUrl: null },
-    { symbol: "TCS", company: "Tata Consultancy Services", category: "Financial Results", subject: "Q1 FY2026 Financial Results", date: `${d} 15:45:00`, attachmentUrl: null },
-    { symbol: "HDFCBANK", company: "HDFC Bank", category: "Dividend", subject: "Declaration of Interim Dividend", date: `${d} 14:30:00`, attachmentUrl: null },
-    { symbol: "INFOSYS", company: "Infosys Ltd", category: "Board Meeting", subject: "Board Meeting scheduled for July 28", date: `${d} 12:00:00`, attachmentUrl: null },
-    { symbol: "ICICIBANK", company: "ICICI Bank", category: "General", subject: "Analyst / Investor Meet", date: `${d} 11:00:00`, attachmentUrl: null },
-  ];
 }
 
 export async function GET(req: NextRequest) {
@@ -76,7 +65,8 @@ export async function GET(req: NextRequest) {
     let data = await cache.getOrSet(cacheKey, () => fetchFilings(fromDate, toDate), 5 * 60 * 1000);
     if (category) data = data.filter((d) => d.category === category);
     return NextResponse.json(data);
-  } catch {
-    return NextResponse.json(mockFilings());
+  } catch (error) {
+    console.error("Corporate filing data is unavailable", error);
+    return NextResponse.json({ error: "Corporate filing data is temporarily unavailable" }, { status: 502 });
   }
 }

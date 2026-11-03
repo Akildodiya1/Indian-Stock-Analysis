@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db, isDatabaseConfigured } from "@workspace/db";
 import { watchlistTable } from "@workspace/db";
 import { fetchQuotes } from "@/lib/yahoo-finance";
+import { getWatchlistDatabaseError } from "@/lib/watchlist-db-error";
 
 export const dynamic = "force-dynamic";
 
@@ -49,7 +50,8 @@ export async function GET() {
     return NextResponse.json(data);
   } catch (err) {
     console.error("watchlist GET error", err);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    const failure = getWatchlistDatabaseError(err);
+    return NextResponse.json({ error: failure.error }, { status: failure.status });
   }
 }
 
@@ -91,6 +93,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ symbol, quoteUnavailable: addedPrice == null }, { status: 201 });
   } catch (err) {
     console.error("watchlist POST error", err);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    const failure = getWatchlistDatabaseError(err);
+    return NextResponse.json({ error: failure.error }, { status: failure.status });
   }
 }

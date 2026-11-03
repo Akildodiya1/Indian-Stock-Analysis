@@ -213,7 +213,7 @@ function ScanResultRow({ result }: { result: ScanResult }) {
                 <span className="ml-1 text-[9px] bg-cyan-500/20 text-cyan-400 px-1 rounded font-bold">F&O</span>
               )}
             </div>
-            <div className="text-[10px] text-muted-foreground truncate max-w-[120px]">{result.stock.name}</div>
+            <div className="text-[10px] text-muted-foreground truncate max-w-30">{result.stock.name}</div>
           </div>
         </Link>
       </td>
@@ -280,16 +280,20 @@ function ScanBlock({
 }
 
 export default function ScansPage() {
-  const { data: stocks, isLoading } = useQuery<Stock[]>({
+  const { data: stocks, isLoading, isError } = useQuery<Stock[]>({
     queryKey: ["screener", "all-scans"],
-    queryFn: () => fetch(apiUrl("/screener?exchange=NSE&sortBy=marketCap&sortOrder=desc")).then((r) => r.json()),
+    queryFn: async () => {
+      const response = await fetch(apiUrl("/screener?exchange=NSE&sortBy=marketCap&sortOrder=desc"));
+      if (!response.ok) throw new Error("Stock scan data request failed");
+      return response.json();
+    },
     staleTime: 2 * 60_000,
   });
 
   const [expandedCat, setExpandedCat] = useState<string | null>("price");
 
   return (
-    <div className="space-y-6 max-w-screen-xl">
+    <div className="space-y-6 max-w-7xl">
       <div>
         <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
           <Zap className="h-6 w-6 text-yellow-500" />
@@ -303,6 +307,10 @@ export default function ScansPage() {
           {[...Array(5)].map((_, i) => (
             <div key={i} className="h-16 rounded-lg border bg-card animate-pulse" />
           ))}
+        </div>
+      ) : isError ? (
+        <div role="alert" className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-4 text-sm text-amber-500">
+          Live NSE stock data is unavailable. Please try again later.
         </div>
       ) : (
         <div className="space-y-4">

@@ -144,9 +144,9 @@ function StockRow({ q, rank }: { q: Quote; rank: number }) {
 }
 
 function MoverSection({
-  title, icon: Icon, iconClass, data, isLoading,
+  title, icon: Icon, iconClass, data, isLoading, isError,
 }: {
-  title: string; icon: React.ElementType; iconClass: string; data?: Quote[]; isLoading: boolean;
+  title: string; icon: React.ElementType; iconClass: string; data?: Quote[]; isLoading: boolean; isError: boolean;
 }) {
   return (
     <div className="rounded-lg border bg-card flex flex-col">
@@ -161,6 +161,8 @@ function MoverSection({
               <div key={i} className="h-10 rounded-md bg-accent/40 animate-pulse" />
             ))}
           </div>
+        ) : isError ? (
+          <div role="alert" className="py-8 text-center text-xs text-amber-500">Live data unavailable</div>
         ) : (data ?? []).length === 0 ? (
           <div className="py-8 text-center text-xs text-muted-foreground">No data available</div>
         ) : (
@@ -181,36 +183,62 @@ type Region = (typeof REGIONS)[number];
 export default function MarketPage() {
   const [globalRegion, setGlobalRegion] = useState<Region>("US");
 
-  const { data: indices, isLoading: indicesLoading } = useQuery<Quote[]>({
+  const { data: indices, isLoading: indicesLoading, isError: indicesError } = useQuery<Quote[]>({
     queryKey: ["market", "overview"],
-    queryFn: () => fetch(apiUrl("/market/overview")).then((r) => r.json()),
+    queryFn: async () => {
+      const response = await fetch(apiUrl("/market/overview"));
+      if (!response.ok) throw new Error("Market overview request failed");
+      return response.json();
+    },
   });
 
-  const { data: gainers, isLoading: gainersLoading } = useQuery<Quote[]>({
+  const { data: gainers, isLoading: gainersLoading, isError: gainersError } = useQuery<Quote[]>({
     queryKey: ["market", "top-gainers"],
-    queryFn: () => fetch(apiUrl("/market/top-gainers")).then((r) => r.json()),
+    queryFn: async () => {
+      const response = await fetch(apiUrl("/market/top-gainers"));
+      if (!response.ok) throw new Error("Top gainers request failed");
+      return response.json();
+    },
   });
 
-  const { data: losers, isLoading: losersLoading } = useQuery<Quote[]>({
+  const { data: losers, isLoading: losersLoading, isError: losersError } = useQuery<Quote[]>({
     queryKey: ["market", "top-losers"],
-    queryFn: () => fetch(apiUrl("/market/top-losers")).then((r) => r.json()),
+    queryFn: async () => {
+      const response = await fetch(apiUrl("/market/top-losers"));
+      if (!response.ok) throw new Error("Top losers request failed");
+      return response.json();
+    },
   });
 
-  const { data: active, isLoading: activeLoading } = useQuery<Quote[]>({
+  const { data: active, isLoading: activeLoading, isError: activeError } = useQuery<Quote[]>({
     queryKey: ["market", "most-active"],
-    queryFn: () => fetch(apiUrl("/market/most-active")).then((r) => r.json()),
+    queryFn: async () => {
+      const response = await fetch(apiUrl("/market/most-active"));
+      if (!response.ok) throw new Error("Most-active stocks request failed");
+      return response.json();
+    },
   });
 
-  const { data: multiAsset, isLoading: multiLoading } = useQuery<MultiAsset[]>({
+  const { data: multiAsset, isLoading: multiLoading, isError: multiError } = useQuery<MultiAsset[]>({
     queryKey: ["market", "multi-asset"],
-    queryFn: () => fetch(apiUrl("/market/multi-asset")).then((r) => r.json()),
-    staleTime: 60_000,
+    queryFn: async () => {
+      const response = await fetch(apiUrl("/market/multi-asset"));
+      if (!response.ok) throw new Error("Multi-asset request failed");
+      return response.json();
+    },
+    staleTime: 5 * 60_000,
+    retry: false,
   });
 
-  const { data: globalIndices, isLoading: globalLoading } = useQuery<GlobalIndex[]>({
+  const { data: globalIndices, isLoading: globalLoading, isError: globalError } = useQuery<GlobalIndex[]>({
     queryKey: ["market", "global"],
-    queryFn: () => fetch(apiUrl("/market/global")).then((r) => r.json()),
-    staleTime: 2 * 60_000,
+    queryFn: async () => {
+      const response = await fetch(apiUrl("/market/global"));
+      if (!response.ok) throw new Error("Global markets request failed");
+      return response.json();
+    },
+    staleTime: 5 * 60_000,
+    retry: false,
   });
 
   const vix = multiAsset?.find((a) => a.symbol === "^INDIAVIX");
@@ -218,7 +246,7 @@ export default function MarketPage() {
   const regionIndices = (globalIndices ?? []).filter((g) => g.region === globalRegion);
 
   return (
-    <div className="space-y-6 max-w-screen-xl">
+    <div className="space-y-6 max-w-7xl">
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div>
@@ -242,8 +270,10 @@ export default function MarketPage() {
         <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 xl:grid-cols-6">
           {indicesLoading
             ? [...Array(6)].map((_, i) => (
-                <div key={i} className="rounded-lg border bg-card p-4 h-[88px] animate-pulse" />
+                <div key={i} className="rounded-lg border bg-card p-4 h-22 animate-pulse" />
               ))
+            : indicesError
+              ? <div role="alert" className="col-span-full rounded-lg border border-amber-500/30 p-4 text-sm text-amber-500">Market indices are temporarily unavailable.</div>
             : (indices ?? []).map((q) => <IndexCard key={q.symbol} q={q} />)}
         </div>
       </div>
@@ -257,13 +287,15 @@ export default function MarketPage() {
         {multiLoading ? (
           <div className="grid gap-3 grid-cols-2 sm:grid-cols-4 xl:grid-cols-7">
             {[...Array(7)].map((_, i) => (
-              <div key={i} className="rounded-lg border bg-card p-3 h-[84px] animate-pulse" />
+              <div key={i} className="rounded-lg border bg-card p-3 h-21 animate-pulse" />
             ))}
           </div>
         ) : (
-          <div className="grid gap-3 grid-cols-2 sm:grid-cols-4 xl:grid-cols-7">
-            {otherAssets.map((a) => <AssetCard key={a.symbol} a={a} />)}
-          </div>
+          multiError
+            ? <div role="alert" className="rounded-lg border border-amber-500/30 p-4 text-sm text-amber-500">Multi-asset quotes are temporarily unavailable.</div>
+            : <div className="grid gap-3 grid-cols-2 sm:grid-cols-4 xl:grid-cols-7">
+                {otherAssets.map((a) => <AssetCard key={a.symbol} a={a} />)}
+              </div>
         )}
       </div>
 
@@ -297,18 +329,20 @@ export default function MarketPage() {
                 ))}
               </div>
             ) : (
-              <div className="space-y-0.5">
-                {regionIndices.map((g) => <GlobalCard key={g.symbol} g={g} />)}
-              </div>
+              globalError
+                ? <div role="alert" className="py-8 text-center text-xs text-amber-500">Global market data is temporarily unavailable.</div>
+                : <div className="space-y-0.5">
+                    {regionIndices.map((g) => <GlobalCard key={g.symbol} g={g} />)}
+                  </div>
             )}
           </div>
         </div>
 
         {/* Top movers */}
         <div className="lg:col-span-2 grid gap-4 md:grid-cols-3">
-          <MoverSection title="Top Gainers" icon={TrendingUp} iconClass="text-green-500" data={gainers} isLoading={gainersLoading} />
-          <MoverSection title="Top Losers" icon={TrendingDown} iconClass="text-red-500" data={losers} isLoading={losersLoading} />
-          <MoverSection title="Most Active" icon={Activity} iconClass="text-primary" data={active} isLoading={activeLoading} />
+          <MoverSection title="Top Gainers" icon={TrendingUp} iconClass="text-green-500" data={gainers} isLoading={gainersLoading} isError={gainersError} />
+          <MoverSection title="Top Losers" icon={TrendingDown} iconClass="text-red-500" data={losers} isLoading={losersLoading} isError={losersError} />
+          <MoverSection title="Most Active" icon={Activity} iconClass="text-primary" data={active} isLoading={activeLoading} isError={activeError} />
         </div>
       </div>
     </div>

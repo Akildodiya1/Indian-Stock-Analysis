@@ -1,59 +1,96 @@
 import { NextResponse } from "next/server";
-import { fetchSectorIndices, SECTOR_INDICES } from "@/lib/yahoo-finance";
-import { NSE_STOCKS } from "@/lib/stock-list";
 import { cache } from "@/lib/cache";
+import { fetchIndianEquityScreenerQuotes } from "@/lib/yahoo-finance";
 
-// Map sector index sectors to our stock-list sector names
-const SECTOR_MAP: Record<string, string[]> = {
-  Banking: ["Financial Services"],
-  IT: ["Technology"],
-  Auto: ["Consumer Discretionary"],
-  Pharma: ["Healthcare"],
-  FMCG: ["Consumer Staples"],
-  Metals: ["Materials"],
-  Energy: ["Energy"],
-  Infrastructure: ["Industrials"],
-  Realty: ["Real Estate"],
-};
+interface HeatmapStock {
+  symbol: string;
+  name: string;
+  sector: string | null;
+  change1d: number | null;
+}
 
-const TOP_STOCKS_PER_SECTOR: Record<string, string[]> = {
-  Banking: ["HDFCBANK", "ICICIBANK", "SBIN", "KOTAKBANK", "AXISBANK"],
-  IT: ["TCS", "INFOSYS", "HCLTECH", "WIPRO", "TECHM"],
-  Auto: ["MARUTI", "TATAMOTORS", "M&M", "BAJAJ-AUTO", "EICHERMOT"],
-  Pharma: ["SUNPHARMA", "DRREDDY", "CIPLA", "DIVISLAB", "APOLLOHOSP"],
-  FMCG: ["HINDUNILVR", "ITC", "NESTLEIND", "BRITANNIA", "DABUR"],
-  Metals: ["TATASTEEL", "JSWSTEEL", "HINDALCO", "COALINDIA", "ONGC"],
-  Energy: ["RELIANCE", "ONGC", "BPCL", "COALINDIA", "NTPC"],
-  Infrastructure: ["LT", "ADANIPORTS", "ADANIENT", "SIEMENS", "POWERGRID"],
-  Realty: ["DLF", "GODREJPROP", "OBEROIRLTY"],
-  Midcap: [],
-  Smallcap: [],
-};
+interface HeatmapIndustry {
+  industry: string;
+  stockCount: number;
+  pricedCount: number;
+  change1d: number | null;
+  stocks: HeatmapStock[];
+}
 
-async function buildHeatmap() {
-  const indices = await fetchSectorIndices();
-  return indices.map((idx) => {
-    const stockListSectors = SECTOR_MAP[idx.sectorName] ?? [];
-    const stocks = NSE_STOCKS.filter((s) => stockListSectors.includes(s.sector));
-    const sectorInfo = SECTOR_INDICES.find((si) => si.sector === idx.sectorName);
-    const topStocks = TOP_STOCKS_PER_SECTOR[idx.sectorName] ?? [];
-    return {
-      sector: idx.sectorName,
-      indexSymbol: sectorInfo?.symbol ?? "",
-      indexName: idx.shortName ?? idx.sectorName,
-      change1d: idx.regularMarketChangePercent ?? 0,
-      price: idx.regularMarketPrice ?? 0,
-      stockCount: stocks.length > 0 ? stocks.length : undefined,
-      topStocks: topStocks.slice(0, 4),
-    };
-  });
+interface HeatmapData {
+  totalStocks: number;
+  industryCount: number;
+  unclassifiedCount: number;
+  industries: HeatmapIndustry[];
+}
+
+async function buildHeatmap(): Promise<HeatmapData> {
+  const quotes = await fetchIndianEquityScreenerQuotes();
+  const groups = new Map<string, HeatmapStock[]>();
+
+  for (const quote of quotes) {
+    const industry = quote.industry?.trim() || "Unclassified";
+    const stocks = groups.get(industry) ?? [];
+    stocks.push({
+      symbol: quote.symbol,
+      name: quote.shortName ?? quote.longName ?? quote.symbol,
+      sector: quote.sector?.trim() || null,
+      change1d:
+        typeof quote.regularMarketChangePercent === "number"
+          ? quote.regularMarketChangePercent
+          : null,
+    });
+    groups.set(industry, stocks);
+  }
+
+  const industries = [...groups.entries()]
+    .map(([industry, stocks]) => {
+      const pricedStocks = stocks.filter(
+        (stock): stock is HeatmapStock & { change1d: number } =>
+          stock.change1d !== null,
+      );
+      return {
+        industry,
+        stockCount: stocks.length,
+        pricedCount: pricedStocks.length,
+        change1d:
+          pricedStocks.length > 0
+            ? pricedStocks.reduce((total, stock) => total + stock.change1d, 0) /
+              pricedStocks.length
+            : null,
+        stocks: stocks.sort((a, b) => a.name.localeCompare(b.name)),
+      };
+    })
+    .sort((a, b) => {
+      if (a.industry === "Unclassified") return 1;
+      if (b.industry === "Unclassified") return -1;
+      return a.industry.localeCompare(b.industry);
+    });
+
+  return {
+    totalStocks: quotes.length,
+    industryCount: industries.filter(
+      (item) => item.industry !== "Unclassified",
+    ).length,
+    unclassifiedCount:
+      industries.find((item) => item.industry === "Unclassified")?.stockCount ??
+      0,
+    industries,
+  };
 }
 
 export async function GET() {
   try {
-    const data = await cache.getOrSet("market:heatmap", () => buildHeatmap(), 3 * 60 * 1000);
+    const data = await cache.getOrSet(
+      "market:heatmap:all-nse-industries",
+      buildHeatmap,
+      15 * 60 * 1000,
+    );
     return NextResponse.json(data);
   } catch {
-    return NextResponse.json([], { status: 200 });
+    return NextResponse.json(
+      { error: "Unable to load the complete NSE industry heatmap." },
+      { status: 502 },
+    );
   }
 }

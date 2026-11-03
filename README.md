@@ -100,21 +100,29 @@ with live screenshots and curl checks. Two real bugs were found and fixed:
 - **How it was diagnosed:** confirmed via curl that the API endpoint itself returns
   correct, real data (`FII/FPI` and `DII` net values) — so the bug was purely a
   client-side loading-state/UX issue, not a data problem.
-- **Fix:** added `placeholderData` to the `useQuery` call with realistic mock FII/DII
-  figures, so the cards render immediately on page load with an "Estimated" badge,
-  then swap to real NSE data (showing an "Updating…" badge mid-fetch) once the
-  session-based fetch completes. This removes the blank/broken-looking state entirely.
+- **Fix:** removed fabricated FII/DII placeholder values and the generated weekly
+  history chart. The page now shows live NSE data only and reports when the source
+  is unavailable.
 - **Lesson for future work:** any page that depends on NSE India's session-cookie
-  dance will have a multi-second cold-start delay. Always pair those queries with
-  `placeholderData` (or a skeleton that's visually complete, not empty) so the first
-  paint never looks broken.
+  dance can have a multi-second cold-start delay. Use a clear loading state rather
+  than presenting placeholder values as market data.
 
 ### Phase 4 — Full regression pass (this session, final)
-Every page was re-screenshotted after the fixes to confirm no regressions:
-Market Overview, Screener (100 stocks), Stock Detail (RELIANCE, chart + fundamentals),
-Watchlist, News, Scans, Portfolio, Alerts, Calendar, Sectors (heatmap), Query Screener
-(95 stocks), Forex (10 pairs), Gold ETFs (7 funds, fixed), FII/DII (fixed, live NSE data).
-All returned HTTP 200 and rendered correctly.
+The market screener and heatmap now load the live Yahoo Finance NSE equity universe
+instead of a bundled stock sample. Market-data routes no longer substitute fabricated
+records when NSE or Yahoo Finance is unavailable; they return an explicit error and
+the affected page reports that live data could not be loaded.
+
+### Phase 5 — EOD stock and index analytics
+- Stock detail now supports five years of daily history and a Corporate Actions tab
+  for Yahoo Finance dividend and split events.
+- Added Index Analytics for daily close, period returns, five-year range, and drawdown
+  across six configured benchmarks. Daily history and analytics use a 12-hour
+  process-local cache; this is not durable EOD storage.
+- The stock screener can request both NSE and BSE listings. If one exchange source
+  fails, it displays available results and a partial-coverage warning.
+- BSE announcements are not integrated: the official endpoint returned HTTP 403 in
+  source-access checks, so no unverified or mock data is shown.
 
 ---
 
@@ -155,11 +163,8 @@ re-investigating them:
 - **`@workspace/db` imported directly into Next.js API routes** — no separate Express
   data layer needed for the primary app; only the legacy `api-server` artifact still
   uses Express.
-- **Mock/placeholder fallbacks are explicit and visible**, never silent. Where an
-  external data source (NSE session, Yahoo crumb) can fail or be slow, the UI either
-  shows a labeled "Estimated"/mock badge or the code path is documented above — the
-  goal is to avoid ever looking broken while also never lying to the user about data
-  being live when it's not.
+- **Market data is live-only.** External source failures are returned as errors and
+  shown as unavailable states; fabricated market values are not used as fallbacks.
 
 ---
 
@@ -171,8 +176,8 @@ Not started yet — flagged here as a backlog for future sessions:
   those two features, unlike the watchlist which is DB-backed).
 - Real push/email notifications for price alerts (currently just UI, no delivery
   mechanism).
-- Expand the formula query screener's dataset from ~95–109 stocks to the full NSE
-  universe if a reliable bulk fundamentals source is found.
+- Consider adding a durable shared cache for the full NSE equity feed to reduce
+  repeated upstream requests across serverless cold starts.
 - Consider periodic background refresh (e.g. a cron-like job) for FII/DII and Gold
   ETF data so the first user of the day doesn't pay the NSE session cold-start cost.
 

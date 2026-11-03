@@ -7,7 +7,6 @@ import {
   searchYahoo,
 } from "@/lib/yahoo-finance";
 import { cache } from "@/lib/cache";
-import { NSE_STOCKS } from "@/lib/stock-list";
 
 export const dynamic = "force-dynamic";
 
@@ -24,19 +23,13 @@ export async function GET(
     cacheKey,
     async () => {
       const normalizedSymbol = symbol.replace(/\.(NS|BO)$/i, "").toUpperCase();
-      const meta = NSE_STOCKS.find((stock) => {
-        const stockKey = stock.symbol.replace(/\.(NS|BO)$/i, "").toUpperCase();
-        return stockKey === normalizedSymbol;
-      });
-      let canonicalSymbol = meta?.symbol ?? `${normalizedSymbol}.NS`;
+      let canonicalSymbol = `${normalizedSymbol}.NS`;
 
-      if (!meta) {
-        const searchResults = await searchYahoo(normalizedSymbol);
-        const nseMatch = searchResults.find((result) =>
-          result.symbol.toUpperCase().endsWith(".NS"),
-        );
-        if (nseMatch) canonicalSymbol = nseMatch.symbol;
-      }
+      const searchResults = await searchYahoo(normalizedSymbol);
+      const nseMatch = searchResults.find((result) =>
+        result.symbol.toUpperCase().endsWith(".NS"),
+      );
+      if (nseMatch) canonicalSymbol = nseMatch.symbol;
 
       const [summary, [quote], nse, financialRatios] = await Promise.all([
         fetchSummary(canonicalSymbol),
@@ -108,8 +101,7 @@ export async function GET(
         sector:
           summary.assetProfile?.sector ??
           quote?.sector ??
-          nse.sector ??
-          meta?.sector,
+          nse.sector,
         industry:
           summary.assetProfile?.industry ?? quote?.industry ?? nse.industry,
         longBusinessSummary: summary.assetProfile?.longBusinessSummary,

@@ -34,6 +34,11 @@ interface ScreenerStock {
   returnOnEquity?: number;
 }
 
+interface ScreenerResponse {
+  stocks: ScreenerStock[];
+  warning: string | null;
+}
+
 interface Filters {
   exchange: string;
   sector: string;
@@ -73,9 +78,13 @@ export default function ScreenerPage() {
   const [applied, setApplied] = useState<Filters>(DEFAULT_FILTERS);
   const [searchTerm, setSearchTerm] = useState("");
 
-  const { data: sectors } = useQuery<string[]>({
+  const { data: sectors = [] } = useQuery<string[]>({
     queryKey: ["screener", "sectors"],
-    queryFn: () => fetch(apiUrl("/screener/sectors")).then((r) => r.json()),
+    queryFn: async () => {
+      const response = await fetch(apiUrl("/screener/sectors"));
+      if (!response.ok) throw new Error("Screener sectors request failed");
+      return response.json();
+    },
   });
 
   const params = new URLSearchParams();
@@ -93,15 +102,22 @@ export default function ScreenerPage() {
   const searchQuery = searchTerm.trim();
   if (searchQuery) params.set("search", searchQuery);
 
-  const { data: rawResults, isLoading } = useQuery<ScreenerStock[]>({
+  const { data: screenerData, isLoading, isError } = useQuery<ScreenerResponse>({
     queryKey: ["screener", "results", applied, searchQuery],
-    queryFn: () => fetch(apiUrl(`/screener?${params}`)).then((r) => r.json()),
+    queryFn: async () => {
+      const response = await fetch(apiUrl(`/screener?${params}`));
+      if (!response.ok) throw new Error("Screener data request failed");
+      return {
+        stocks: await response.json(),
+        warning: response.headers.get("X-Data-Warning"),
+      };
+    },
     staleTime: 60_000,
   });
 
   const results = applied.fnoOnly
-    ? (rawResults ?? []).filter((s) => isFno(s.symbol))
-    : rawResults;
+    ? (screenerData?.stocks ?? []).filter((s) => isFno(s.symbol))
+    : screenerData?.stocks;
 
   const set = (k: keyof Filters, v: string) =>
     setFilters((f) => ({ ...f, [k]: v }));
@@ -115,7 +131,7 @@ export default function ScreenerPage() {
 
   const labelClass = "text-xs font-medium text-muted-foreground mb-1 block";
   const selectClass =
-    "h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring transition-colors";
+    "screener-filter-select h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring transition-colors";
 
   return (
     <div className="space-y-5 max-w-7xl">
@@ -128,6 +144,15 @@ export default function ScreenerPage() {
           Search listed companies and apply filters to surface matching stocks
         </p>
       </div>
+
+      {screenerData?.warning && !searchQuery && (
+        <div
+          role="status"
+          className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm text-amber-600 dark:text-amber-400"
+        >
+          {screenerData.warning}
+        </div>
+      )}
 
       {/* Filter panel */}
       <div className="rounded-lg border bg-card p-4">
@@ -252,7 +277,9 @@ export default function ScreenerPage() {
       <div className="rounded-lg border bg-card overflow-hidden">
         <div className="flex flex-col gap-3 px-4 py-3 border-b bg-card sm:flex-row sm:items-center sm:justify-between">
           <span className="text-sm font-medium">
-            {isLoading
+            {isError
+              ? "Live data unavailable"
+              : isLoading
               ? "Loading..."
               : `${(results ?? []).length} stocks found`}
           </span>
@@ -308,7 +335,7 @@ export default function ScreenerPage() {
                       ))}
                     </tr>
                   ))
-                : (results ?? []).map((s) => {
+                : !isError && (results ?? []).map((s) => {
                     const chg = s.regularMarketChangePercent;
                     return (
                       <tr
@@ -369,7 +396,11 @@ export default function ScreenerPage() {
                   })}
             </tbody>
           </table>
-          {!isLoading && (results ?? []).length === 0 && (
+          {isError ? (
+            <div role="alert" className="py-16 text-center text-amber-500 text-sm">
+              Live screener data is unavailable. Please try again later.
+            </div>
+          ) : !isLoading && (results ?? []).length === 0 && (
             <div className="py-16 text-center text-muted-foreground text-sm">
               No stocks match the current filters.
             </div>

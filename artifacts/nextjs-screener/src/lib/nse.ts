@@ -42,6 +42,115 @@ export async function fetchNseApi<T = unknown>(
   return res.json() as Promise<T>;
 }
 
+export interface NseBulkDeal {
+  date?: string;
+  symbol?: string;
+  secName?: string;
+  clientName?: string;
+  buySell?: string;
+  buyOrSellFlag?: string;
+  quantityTraded?: number | string;
+  wgtAvgPrice?: number | string;
+  tradePrice?: number | string;
+  remarks?: string;
+}
+
+type NseBulkDealResponse =
+  | {
+      data?: NseBulkDeal[];
+      deals?: NseBulkDeal[];
+      bulkDeals?: NseBulkDeal[];
+    }
+  | NseBulkDeal[];
+
+export async function fetchNseBulkDeals(
+  fromDate: string,
+  toDate: string,
+): Promise<NseBulkDeal[]> {
+  let historyError: unknown;
+  for (const from of dateVariants(fromDate)) {
+    for (const to of dateVariants(toDate)) {
+      const historyQuery = new URLSearchParams({ from, to });
+      try {
+        const response = await fetchNseApi<NseBulkDealResponse>(
+          `historical/bulk-deals?${historyQuery}`,
+        );
+        const deals = getNseBulkDealRows(response);
+        if (deals) return deals;
+      } catch (error) {
+        historyError = error;
+      }
+    }
+  }
+  console.warn("NSE historical bulk-deals endpoint failed; trying live deals", historyError);
+
+  try {
+    const response = await fetchNseApi<NseBulkDealResponse>("bulk-deals");
+    const deals = getNseBulkDealRows(response);
+    if (deals) {
+      const start = parseNseDate(fromDate);
+      const end = parseNseDate(toDate);
+      return deals.filter((deal) => {
+        const date = deal.date ? parseNseDate(deal.date) : null;
+        return date != null && date >= start && date <= end;
+      });
+    }
+  } catch (error) {
+    console.warn("NSE live bulk-deals endpoint failed; trying archive endpoint", error);
+  }
+
+  const archiveQuery = new URLSearchParams({
+    number: "500",
+    series: "EQ",
+    from: fromDate,
+    to: toDate,
+    symbol: "",
+    csv: "false",
+  });
+  const response = await fetchNseApi<NseBulkDealResponse>(
+    `bulk-deal-archives?${archiveQuery}`,
+  );
+  const deals = getNseBulkDealRows(response);
+  if (!deals) throw new Error("Unexpected NSE bulk deal response format");
+  return deals;
+}
+
+function parseNseDate(value: string): number {
+  const numericDate = /^(\d{2})-(\d{2})-(\d{4})$/.exec(value);
+  if (numericDate) {
+    return Date.UTC(
+      Number(numericDate[3]),
+      Number(numericDate[2]) - 1,
+      Number(numericDate[1]),
+    );
+  }
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) {
+    throw new Error(`Invalid NSE deal date: ${value}`);
+  }
+  return timestamp;
+}
+
+function dateVariants(value: string): string[] {
+  const dayFirst = /^(\d{2})-(\d{2})-(\d{4})$/.exec(value);
+  if (dayFirst) {
+    return [value, `${dayFirst[3]}-${dayFirst[2]}-${dayFirst[1]}`];
+  }
+  const yearFirst = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (yearFirst) {
+    return [value, `${yearFirst[3]}-${yearFirst[2]}-${yearFirst[1]}`];
+  }
+  return [value];
+}
+
+function getNseBulkDealRows(
+  response: NseBulkDealResponse,
+): NseBulkDeal[] | null {
+  if (Array.isArray(response)) return response;
+  const rows = response.data ?? response.deals ?? response.bulkDeals;
+  return Array.isArray(rows) ? rows : null;
+}
+
 /** Today and N days ago as "DD-MM-YYYY" strings */
 export function nseDate(daysAgo = 0): string {
   const d = new Date();

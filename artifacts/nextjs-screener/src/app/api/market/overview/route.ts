@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { fetchQuotes } from "@/lib/yahoo-finance";
 import { cache } from "@/lib/cache";
-import { INDEX_SYMBOLS } from "@/lib/stock-list";
+import { INDEX_SYMBOLS } from "@/lib/index-symbols";
 
 export const dynamic = "force-dynamic";
 

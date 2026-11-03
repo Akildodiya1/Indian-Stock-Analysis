@@ -56,6 +56,13 @@ interface HistoryRow {
   date: string; timestamp: number; open: number; high: number; low: number; close: number;
   volume: number; change1d: number; change5d: number | null; change22d: number | null; change66d: number | null; rsi: number | null;
 }
+interface CorporateAction {
+  date: string;
+  type: "Dividend" | "Split";
+  description: string;
+  amount?: number;
+  ratio?: string;
+}
 interface NewsItem { uuid: string; title: string; publisher: string; link: string; providerPublishTime: number; relatedTickers?: string[] }
 interface Filing { title: string; date: string; type: string; category: string; url?: string }
 interface TechnicalPoint {
@@ -79,7 +86,7 @@ const PERIODS = [
   { label: "3M", value: "3mo", interval: "1d" },
   { label: "6M", value: "6mo", interval: "1d" },
   { label: "1Y", value: "1y", interval: "1d" },
-  { label: "5Y", value: "5y", interval: "1wk" },
+  { label: "5Y", value: "5y", interval: "1d" },
 ];
 const TECHNICAL_VIEWS = ["Charts", "Volume & Delivery", "Price History"] as const;
 type TechnicalView = (typeof TECHNICAL_VIEWS)[number];
@@ -352,6 +359,19 @@ export default function StockPage() {
     enabled: !!rawSymbol && activeTab === "Filings",
     staleTime: 5 * 60 * 1000,
   });
+  const {
+    data: corporateActions,
+    isLoading: corporateActionsLoading,
+    isError: corporateActionsError,
+  } = useQuery<{ symbol: string; actions: CorporateAction[] }>({
+    queryKey: ["stock", "corporate-actions", rawSymbol],
+    queryFn: () =>
+      fetchStockData(
+        apiUrl(`/stocks/corporate-actions/${encodeURIComponent(rawSymbol)}`),
+      ),
+    enabled: !!rawSymbol && activeTab === "Corporate Actions",
+    staleTime: 12 * 60 * 60 * 1000,
+  });
   const { data: ownership } = useQuery<OwnershipData>({
     queryKey: ["stock", "ownership", rawSymbol],
     queryFn: () => fetchStockData(apiUrl(`/stocks/ownership/${encodeURIComponent(rawSymbol)}`)),
@@ -482,7 +502,7 @@ export default function StockPage() {
           )}
         </div>
         <div className="stock-stats-card rounded-lg border bg-card p-4">
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Today's Stats</h3>
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Today&apos;s Stats</h3>
           <StatRow label="Open" value={formatPrice(quote?.regularMarketOpen)} />
           <StatRow label="Prev Close" value={formatPrice(quote?.regularMarketPreviousClose)} />
           <StatRow label="High" value={formatPrice(quote?.regularMarketDayHigh)} />
@@ -513,7 +533,9 @@ export default function StockPage() {
         </div>
       </div>
 
-      {activeTab !== "Technicals" && activeTab !== "Filings" && (
+      {activeTab !== "Technicals" &&
+        activeTab !== "Filings" &&
+        activeTab !== "Corporate Actions" && (
         <StockInsightsDashboard
           tab={activeTab}
           insights={insights}
@@ -544,6 +566,57 @@ export default function StockPage() {
             </button>
           ))}
         </div>
+      )}
+
+      {activeTab === "Corporate Actions" && (
+        <section className="space-y-3">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <h2 className="font-semibold">Corporate Actions — {displaySymbol(rawSymbol)}</h2>
+              <p className="text-xs text-muted-foreground mt-1">
+                Dividends and stock splits recorded over the last five years · Yahoo Finance
+              </p>
+            </div>
+          </div>
+          {corporateActionsLoading ? (
+            <div className="rounded-lg border bg-card p-8 text-center text-sm text-muted-foreground">
+              Loading corporate actions…
+            </div>
+          ) : corporateActionsError ? (
+            <div role="alert" className="rounded-lg border border-amber-500/30 bg-card p-8 text-center text-sm text-amber-500">
+              Corporate action history is temporarily unavailable.
+            </div>
+          ) : (corporateActions?.actions ?? []).length === 0 ? (
+            <div className="rounded-lg border bg-card p-8 text-center text-sm text-muted-foreground">
+              No dividend or split events were reported in this five-year period.
+            </div>
+          ) : (
+            <div className="overflow-x-auto rounded-lg border bg-card">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b bg-muted/30 text-left text-xs text-muted-foreground">
+                    <th className="px-4 py-3 font-medium">Ex-date</th>
+                    <th className="px-4 py-3 font-medium">Action</th>
+                    <th className="px-4 py-3 font-medium text-right">Details</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {corporateActions?.actions.map((action) => (
+                    <tr key={`${action.date}-${action.type}-${action.description}`} className="border-b last:border-0">
+                      <td className="px-4 py-3 tabular-nums">{action.date}</td>
+                      <td className="px-4 py-3">{action.type}</td>
+                      <td className="px-4 py-3 text-right tabular-nums">
+                        {action.type === "Dividend" && action.amount != null
+                          ? `₹${action.amount.toFixed(2)} per share`
+                          : action.description}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
       )}
 
       {/* Technical charts */}

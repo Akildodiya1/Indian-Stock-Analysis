@@ -159,10 +159,31 @@
   --opaque-button-border-intensity: -5;
   --elevate-1: rgba(0,0,0,.03);
   --elevate-2: rgba(0,0,0,.06);
+  --sidebar: 0 0% 100%;
+  --sidebar-foreground: 222 47% 11%;
+  --sidebar-border: 214 32% 88%;
+  --sidebar-primary: 199 89% 40%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 210 20% 91%;
+  --sidebar-accent-foreground: 222 47% 11%;
+  --sidebar-ring: 199 89% 42%;
 }
 
 * {
   border-color: hsl(var(--border));
+}
+
+[data-theme="dark"] .screener-filter-select {
+  color-scheme: dark;
+}
+
+[data-theme="light"] .screener-filter-select {
+  color-scheme: light;
+}
+
+.screener-filter-select option {
+  background-color: hsl(var(--popover));
+  color: hsl(var(--popover-foreground));
 }
 
 body {

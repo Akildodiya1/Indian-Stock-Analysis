@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db, isDatabaseConfigured } from "@workspace/db";
 import { watchlistTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
+import { getWatchlistDatabaseError } from "@/lib/watchlist-db-error";
 
 export const dynamic = "force-dynamic";
 
@@ -20,6 +21,7 @@ export async function DELETE(
     return NextResponse.json({ success: true });
   } catch (err) {
     console.error("watchlist DELETE error", err);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    const failure = getWatchlistDatabaseError(err);
+    return NextResponse.json({ error: failure.error }, { status: failure.status });
   }
 }

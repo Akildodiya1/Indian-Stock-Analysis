@@ -7,6 +7,7 @@ async function yfFetch(url: string) {
   const res = await fetch(url, {
     headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/json" },
     next: { revalidate: 0 },
+    signal: AbortSignal.timeout(5_000),
   });
   if (!res.ok) throw new Error(`YF ${res.status}`);
   return res.json();
@@ -51,14 +52,22 @@ async function fetchAsset(asset: (typeof ASSETS)[0]) {
 
 async function fetchAll() {
   const results = await Promise.all(ASSETS.map(fetchAsset));
-  return results.filter(Boolean);
+  const available = results.filter((result) => result !== null);
+  if (available.length === 0) {
+    throw new Error("No multi-asset quotes were returned");
+  }
+  return available;
 }
 
 export async function GET() {
   try {
     const data = await cache.getOrSet("market:multi-asset", () => fetchAll(), 60 * 1000);
     return NextResponse.json(data);
-  } catch {
-    return NextResponse.json([], { status: 200 });
+  } catch (error) {
+    console.error("Multi-asset data is unavailable", error);
+    return NextResponse.json(
+      { error: "Multi-asset data is temporarily unavailable" },
+      { status: 502 },
+    );
   }
 }

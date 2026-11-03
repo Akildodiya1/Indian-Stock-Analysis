@@ -39,6 +39,7 @@ const NAV_GROUPS = [
     items: [
       { href: "/market-breadth", label: "Market Breadth", icon: Gauge },
       { href: "/industry-rotation", label: "Industry Rotation", icon: RotateCcw },
+      { href: "/index-analytics", label: "Index Analytics", icon: BarChart3 },
       { href: "/futures", label: "Futures Dashboard", icon: Layers },
     ],
   },
@@ -108,7 +109,7 @@ export function Sidebar() {
   return (
     <>
       <button
-        className="fixed top-4 left-4 z-[60] flex h-9 w-9 items-center justify-center rounded-md border border-sidebar-border bg-sidebar text-sidebar-foreground md:hidden"
+        className="fixed top-4 left-4 z-60 flex h-9 w-9 items-center justify-center rounded-md border border-sidebar-border bg-sidebar text-sidebar-foreground md:hidden"
         onClick={() => setOpen((o) => !o)}
         aria-label="Toggle menu"
       >

@@ -1,11 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { Loader2, Search, TrendingUp, X } from "lucide-react";
 import { apiUrl } from "@/lib/api-url";
 import { displaySymbol } from "@/lib/format";
-import { NSE_STOCKS } from "@/lib/stock-list";
 
 interface SearchResult {
   symbol: string;
@@ -13,41 +12,6 @@ interface SearchResult {
   exchDisp: string;
   typeDisp?: string;
   sector?: string;
-}
-
-function localSearch(query: string): SearchResult[] {
-  const normalized = query.trim().toLowerCase();
-  if (!normalized) return [];
-
-  return NSE_STOCKS
-    .filter((stock) =>
-      [stock.symbol, displaySymbol(stock.symbol), stock.name, stock.sector]
-        .some((value) => value.toLowerCase().includes(normalized))
-    )
-    .slice(0, 8)
-    .map((stock) => ({
-      symbol: stock.symbol,
-      shortname: stock.name,
-      exchDisp: stock.exchange,
-      typeDisp: "Equity",
-      sector: stock.sector,
-    }));
-}
-
-function mergeResults(localResults: SearchResult[], remoteResults: SearchResult[]) {
-  const merged = [...localResults];
-  const seen = new Set(merged.map((result) => result.symbol.toUpperCase()));
-
-  for (const result of remoteResults) {
-    const key = result.symbol.toUpperCase();
-    if (!seen.has(key) && result.symbol) {
-      merged.push(result);
-      seen.add(key);
-    }
-    if (merged.length >= 8) break;
-  }
-
-  return merged.slice(0, 8);
 }
 
 export function StockSearch() {
@@ -59,20 +23,18 @@ export function StockSearch() {
   const [query, setQuery] = useState("");
   const [remoteResults, setRemoteResults] = useState<SearchResult[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [hasSearchError, setHasSearchError] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
 
-  const localResults = useMemo(() => localSearch(query), [query]);
-  const results = useMemo(
-    () => mergeResults(localResults, remoteResults),
-    [localResults, remoteResults],
-  );
+  const results = remoteResults;
   const showDropdown = isOpen && query.trim().length > 0;
 
   useEffect(() => {
     const trimmedQuery = query.trim();
     requestRef.current?.abort();
     setRemoteResults([]);
+    setHasSearchError(false);
     setActiveIndex(-1);
 
     if (trimmedQuery.length < 2) {
@@ -94,7 +56,10 @@ export function StockSearch() {
         const data = (await response.json()) as SearchResult[];
         if (!controller.signal.aborted) setRemoteResults(data);
       } catch {
-        if (!controller.signal.aborted) setRemoteResults([]);
+        if (!controller.signal.aborted) {
+          setRemoteResults([]);
+          setHasSearchError(true);
+        }
       } finally {
         if (!controller.signal.aborted) setIsLoading(false);
       }
@@ -229,13 +194,20 @@ export function StockSearch() {
         <div
           id="stock-search-results"
           role="listbox"
-          className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-[70] overflow-hidden rounded-lg border border-border bg-popover shadow-xl"
+          className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-70 overflow-hidden rounded-lg border border-border bg-popover shadow-xl"
         >
           {isLoading ? (
             <div className="px-4 py-5 text-center">
               <p className="text-sm font-medium">Searching...</p>
               <p className="mt-1 text-xs text-muted-foreground">
                 Looking for matching stocks.
+              </p>
+            </div>
+          ) : hasSearchError ? (
+            <div role="alert" className="px-4 py-5 text-center">
+              <p className="text-sm font-medium">Search is unavailable</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Live stock search could not be reached. Please try again.
               </p>
             </div>
           ) : results.length > 0 ? (

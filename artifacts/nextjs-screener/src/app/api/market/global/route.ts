@@ -7,6 +7,7 @@ async function yfFetch(url: string) {
   const res = await fetch(url, {
     headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/json" },
     next: { revalidate: 0 },
+    signal: AbortSignal.timeout(5_000),
   });
   if (!res.ok) throw new Error(`YF ${res.status}`);
   return res.json();
@@ -46,14 +47,22 @@ async function fetchIndex(idx: (typeof GLOBAL_INDICES)[0]) {
 
 async function fetchAll() {
   const results = await Promise.all(GLOBAL_INDICES.map(fetchIndex));
-  return results.filter(Boolean);
+  const available = results.filter((result) => result !== null);
+  if (available.length === 0) {
+    throw new Error("No global index quotes were returned");
+  }
+  return available;
 }
 
 export async function GET() {
   try {
-    const data = await cache.getOrSet("market:global", () => fetchAll(), 2 * 60 * 1000);
+    const data = await cache.getOrSet("market:global", () => fetchAll(), 5 * 60 * 1000);
     return NextResponse.json(data);
-  } catch {
-    return NextResponse.json([], { status: 200 });
+  } catch (error) {
+    console.error("Global market data is unavailable", error);
+    return NextResponse.json(
+      { error: "Global market data is temporarily unavailable" },
+      { status: 502 },
+    );
   }
 }

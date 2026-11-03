@@ -2,8 +2,11 @@ import { NextResponse } from "next/server";
 import { db, isDatabaseConfigured } from "@workspace/db";
 import { portfolioTable } from "@workspace/db/schema";
 import { cache } from "@/lib/cache";
-import { fetchHistory, fetchQuotes } from "@/lib/yahoo-finance";
-import { NSE_STOCKS } from "@/lib/stock-list";
+import {
+  fetchHistory,
+  fetchIndianEquityScreenerQuotes,
+  fetchQuotes,
+} from "@/lib/yahoo-finance";
 import { buildPortfolioRisk } from "@/lib/portfolio-risk";
 
 export const dynamic = "force-dynamic";
@@ -81,10 +84,14 @@ export async function GET() {
         }
 
         const symbols = [...aggregated.keys()];
-        const [quotes, historyBySymbol, niftyHistory] = await Promise.all([
+        const [quotes, historyBySymbol, niftyHistory, allEquityQuotes] = await Promise.all([
           fetchQuotes(symbols).catch(() => []),
           fetchPositionHistories(symbols),
           fetchHistory("^NSEI", "1y", "1d").catch(() => []),
+          fetchIndianEquityScreenerQuotes().catch((error) => {
+            console.warn("Portfolio sector metadata is unavailable", error);
+            return null;
+          }),
         ]);
         const quoteBySymbol = new Map(
           quotes.map((quote) => [quote.symbol.toUpperCase(), quote]),
@@ -105,9 +112,16 @@ export async function GET() {
           };
         });
         const sectorsBySymbol = new Map(
-          NSE_STOCKS.map((stock) => [stock.symbol.toUpperCase(), stock.sector]),
+          (allEquityQuotes ?? []).map((quote) => [
+            quote.symbol.replace(/\.(NS|BO)$/i, "").toUpperCase(),
+            quote.sector ?? "Unclassified",
+          ]),
         );
-        return buildPortfolioRisk(positions, niftyHistory, sectorsBySymbol);
+        const response = buildPortfolioRisk(positions, niftyHistory, sectorsBySymbol);
+        if (allEquityQuotes === null) {
+          response.warnings.push("Sector classifications are unavailable; affected holdings are unclassified.");
+        }
+        return response;
       },
       CACHE_TTL_MS,
     );

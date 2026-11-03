@@ -134,12 +134,13 @@ lib/db/src/schema/watchlist.ts  # PostgreSQL watchlist schema
 ## Architecture decisions
 
 - **Next.js at the root path**: the app owns `/` and its internal API routes own `/api`. Client fetches use `apiUrl('/...')` so this remains safe if the artifact is mounted under another path later.
-- **Server-side caching**: In-memory TTL cache (`src/lib/cache.ts`) per Next.js process. Market data: 60s TTL, fundamentals: 5min TTL, screener quotes: 2min TTL.
+- **Server-side caching**: In-memory TTL cache (`src/lib/cache.ts`) per Next.js process, with identical concurrent cache misses coalesced into one upstream request. Market data has route-specific TTLs; global markets cache for 5min.
+- **EOD data**: Daily stock history, corporate actions, and index analytics are cached for 12 hours per process. This reduces repeated requests but is not durable storage across restarts.
 - **Yahoo Finance**: Uses chart API v8 (no auth required) for quotes/history. Uses quoteSummary v10 with crumb for fundamentals, falling back to a crumbless `v7/finance/quote` call (`fetchQuoteFallback` in `yahoo-finance.ts`) if the crumb/session fails.
 - **NSE India session**: `src/lib/nse.ts` establishes a cookie session by first hitting the NSE homepage (stores cookies), waits 350ms, then fires the API call. All NSE-specific routes use `fetchNseApi<T>(path)` from this helper.
-- **NSE mock fallbacks**: Every NSE-specific API route (bulk deals, corporate filings, promoter activity, quarterly results, futures dashboard) has a hardcoded mock fallback that fires when the live NSE call fails or returns no data — so the UI always renders.
+- **Market-data failures**: Market routes do not fabricate replacement records. When Yahoo Finance or NSE data is unavailable, the route returns an error and its page displays an unavailable state.
 - **API response caching**: Cache plain data objects, not `NextResponse` instances. Each request creates a fresh JSON response so cached response bodies remain readable.
-- **Screener search**: `api/screener/route.ts` falls back to the full `NSE_STOCKS` static list when no search query is provided (fixes blank Screener and Scans pages).
+- **Screener coverage**: The stock screener uses Yahoo Finance's NSE/BSE equity listings and warns when an exchange source fails; scans, market breadth, and market movers use live NSE data rather than a bundled sample list.
 - **Fundamentals fallback chain**: `api/stocks/fundamentals/[symbol]/route.ts` merges `fetchSummary` (quoteSummary), `fetchQuotes`, and `fetchNseData` (NSE India quote-equity API) results, since any one source can be missing fields or blocked.
 - **RSI(14)**: Computed client-side from OHLCV history data in the stock detail page.
 - **DB imports in API routes**: `@workspace/db` is a workspace package imported directly into Next.js API routes — no need for a separate Express layer.
@@ -148,20 +149,21 @@ lib/db/src/schema/watchlist.ts  # PostgreSQL watchlist schema
 
 ### Markets
 - **Market Overview**: Live Nifty 50, Sensex, Bank Nifty, IT, Auto, Pharma index cards; top gainers/losers/most-active
-- **Sectors**: Sector performance heatmap with 1D/1W/1M/3M view
+- **Sectors**: Industry heatmap with ascending/descending 1D/1W/1M/3M growth sorting, recent 5D and 14D-vs-66D performance matrix, and sector indices
 - **FII/DII**: Foreign and domestic institutional flow data
 - **Forex**: USD-INR and major currency pairs
 - **Gold ETFs**: Sovereign gold bond and ETF tracker
 - **Bulk Deals**: Institutional buy/sell reports with date range filter and BUY/SELL badges
 
 ### Screener
-- **Stock Screener**: Filter 109+ NSE stocks by exchange, sector, P/E, P/B, market cap; sort by any metric
+- **Stock Screener**: Filter NSE/BSE listings by exchange, sector, P/E, P/B, market cap; missing valuation fields do not exclude stocks
 - **Query Screener**: Custom formula-based screener
 - **Scans**: Pre-built scans (52W high/low breakouts, RSI overbought/oversold, volume surges, etc.)
 
 ### Analytics
 - **Market Breadth**: Live A/D ratio, Nifty EMA 20/50/200 participation, 52-week range counts, top movers
 - **Industry Rotation**: RRG (Relative Rotation Graph) scatter chart + sector table with quadrant classification (Leading/Weakening/Lagging/Improving)
+- **Index Analytics**: Daily close, 1M/3M/6M/1Y/5Y returns, five-year range, and maximum drawdown for six benchmarks
 - **Futures Dashboard**: Nifty & BankNifty option chain — OI profile bar chart, PCR, max pain strike, ATM straddle, per-strike OI table
 
 ### Research
@@ -170,7 +172,7 @@ lib/db/src/schema/watchlist.ts  # PostgreSQL watchlist schema
 - **Quarterly Results**: Revenue, profit, EPS with YoY growth and Beat/Miss/Inline classification
 
 ### Portfolio & Tools
-- **Stock Detail**: Live price, OHLCV stats, 52-week range, price chart with period selector, RSI(14) chart, full fundamentals panel with analyst consensus
+- **Stock Detail**: Live price, OHLCV stats, five years of daily chart history, dividend/split history, 52-week range, RSI(14), and fundamentals
 - **Watchlist**: PostgreSQL-backed; search + add stocks, remove stocks, live price updates
 - **Portfolio**: Holdings tracker with P&L
 - **Alerts**: Price alerts (localStorage-backed, browser-side polling)

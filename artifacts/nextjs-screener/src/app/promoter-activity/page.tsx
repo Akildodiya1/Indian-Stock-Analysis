@@ -23,9 +23,13 @@ interface PromoterRecord {
 export default function PromoterActivityPage() {
   const [tab, setTab] = useState("All");
 
-  const { data: records = [], isLoading } = useQuery<PromoterRecord[]>({
+  const { data: records = [], isLoading, isError } = useQuery<PromoterRecord[]>({
     queryKey: ["market", "promoter-activity"],
-    queryFn: () => fetch(apiUrl("/market/promoter-activity")).then(r => r.json()),
+    queryFn: async () => {
+      const response = await fetch(apiUrl("/market/promoter-activity"));
+      if (!response.ok) throw new Error("Promoter activity request failed");
+      return response.json();
+    },
     staleTime: 15 * 60 * 1000,
   });
 
@@ -45,13 +49,13 @@ export default function PromoterActivityPage() {
     : 0;
 
   return (
-    <div className="space-y-6 max-w-screen-xl mx-auto">
+    <div className="space-y-6 max-w-7xl mx-auto">
       <div>
         <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
           <Users className="h-6 w-6 text-primary" />
           Promoter Activity
         </h1>
-        <p className="text-sm text-muted-foreground mt-0.5">Insider & promoter shareholding trends across NSE listed companies</p>
+        <p className="text-sm text-muted-foreground mt-0.5">Up to 30 largest NSE listings with reported promoter shareholding data</p>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -83,7 +87,9 @@ export default function PromoterActivityPage() {
       </Tabs>
 
       <div className="rounded-lg border bg-card overflow-hidden">
-        {isLoading ? (
+        {isError ? (
+          <div role="alert" className="text-center py-16 text-amber-500 text-sm">Live NSE promoter holding data is unavailable. Please try again later.</div>
+        ) : isLoading ? (
           <div className="text-center py-16 text-muted-foreground text-sm">Loading...</div>
         ) : filteredRecords.length === 0 ? (
           <div className="text-center py-16 text-muted-foreground text-sm">No data available</div>
@@ -93,7 +99,7 @@ export default function PromoterActivityPage() {
               <TableRow>
                 <TableHead>Company</TableHead>
                 <TableHead>Sector</TableHead>
-                <TableHead className="w-[150px]">Promoter %</TableHead>
+                <TableHead className="w-37.5">Promoter %</TableHead>
                 <TableHead className="text-right">Pledged %</TableHead>
                 <TableHead className="text-right">Inst %</TableHead>
                 <TableHead className="text-right">Public %</TableHead>
@@ -106,7 +112,7 @@ export default function PromoterActivityPage() {
                 <TableRow key={i}>
                   <TableCell>
                     <div className="font-semibold text-sm text-cyan-400">{displaySymbol(r.symbol)}</div>
-                    <div className="text-[10px] text-muted-foreground truncate max-w-[150px]">{r.name}</div>
+                    <div className="text-[10px] text-muted-foreground truncate max-w-37.5">{r.name}</div>
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground">{r.sector}</TableCell>
                   <TableCell>
@@ -120,7 +126,7 @@ export default function PromoterActivityPage() {
                     )}
                   </TableCell>
                   <TableCell className={`text-right text-xs font-mono ${(r.promoterPledged ?? 0) > 10 ? 'text-red-500 font-bold' : ''}`}>
-                    {r.promoterPledged?.toFixed(2) ?? "0.00"}%
+                    {r.promoterPledged?.toFixed(2) ?? "—"}{r.promoterPledged != null ? "%" : ""}
                   </TableCell>
                   <TableCell className="text-right text-xs font-mono text-muted-foreground">
                     {r.institutionalHolding?.toFixed(2) ?? "—"}%
