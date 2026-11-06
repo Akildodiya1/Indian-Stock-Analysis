@@ -2,7 +2,14 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Bell, Plus, Trash2, Search, CheckCircle2, AlertTriangle } from "lucide-react";
+import {
+  Bell,
+  Plus,
+  Trash2,
+  Search,
+  CheckCircle2,
+  AlertTriangle,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { apiUrl } from "@/lib/api-url";
@@ -35,8 +42,12 @@ const CONDITIONS = [
 
 function loadAlerts(): Alert[] {
   try {
-    return JSON.parse(localStorage.getItem("fintrack_alerts") ?? "[]") as Alert[];
-  } catch { return []; }
+    return JSON.parse(
+      localStorage.getItem("fintrack_alerts") ?? "[]",
+    ) as Alert[];
+  } catch {
+    return [];
+  }
 }
 function saveAlerts(alerts: Alert[]) {
   localStorage.setItem("fintrack_alerts", JSON.stringify(alerts));
@@ -46,11 +57,16 @@ function checkAlert(alert: Alert, quote: StockQuote): boolean {
   const price = quote.regularMarketPrice ?? 0;
   const pct = quote.regularMarketChangePercent ?? 0;
   switch (alert.condition) {
-    case "above": return price >= alert.value;
-    case "below": return price <= alert.value;
-    case "change_pct_above": return pct >= alert.value;
-    case "change_pct_below": return pct <= alert.value;
-    default: return false;
+    case "above":
+      return price >= alert.value;
+    case "below":
+      return price <= alert.value;
+    case "change_pct_above":
+      return pct >= alert.value;
+    case "change_pct_below":
+      return pct <= alert.value;
+    default:
+      return false;
   }
 }
 
@@ -67,7 +83,9 @@ function conditionLabel(a: Alert) {
 export default function AlertsPage() {
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
-  const [searchResults, setSearchResults] = useState<{ symbol: string; shortname: string }[]>([]);
+  const [searchResults, setSearchResults] = useState<
+    { symbol: string; shortname: string }[]
+  >([]);
   const [selectedSymbol, setSelectedSymbol] = useState("");
   const [condition, setCondition] = useState<Alert["condition"]>("above");
   const [value, setValue] = useState("");
@@ -77,7 +95,9 @@ export default function AlertsPage() {
     setAlerts(loadAlerts());
   }, []);
 
-  const symbols = [...new Set(alerts.filter((a) => !a.triggered).map((a) => a.symbol))];
+  const symbols = [
+    ...new Set(alerts.filter((a) => !a.triggered).map((a) => a.symbol)),
+  ];
 
   const { data: quotes } = useQuery<StockQuote[]>({
     queryKey: ["alerts-quotes", symbols.join(",")],
@@ -86,10 +106,14 @@ export default function AlertsPage() {
       const results = await Promise.all(
         symbols.map(async (sym) => {
           try {
-            const r = await fetch(apiUrl(`/stocks/quote/${encodeURIComponent(sym)}`));
-            return r.ok ? r.json() as Promise<StockQuote> : null;
-          } catch { return null; }
-        })
+            const r = await fetch(
+              apiUrl(`/stocks/quote/${encodeURIComponent(sym)}`),
+            );
+            return r.ok ? (r.json() as Promise<StockQuote>) : null;
+          } catch {
+            return null;
+          }
+        }),
       );
       return results.filter(Boolean) as StockQuote[];
     },
@@ -107,10 +131,17 @@ export default function AlertsPage() {
         const quote = quotes.find((q) => q.symbol === alert.symbol);
         if (quote && checkAlert(alert, quote)) {
           changed = true;
-          toast.success(`Alert triggered: ${displaySymbol(alert.symbol)} — ${conditionLabel(alert)}`, {
-            duration: 8000,
-          });
-          return { ...alert, triggered: true, triggeredAt: new Date().toISOString() };
+          toast.success(
+            `Alert triggered: ${displaySymbol(alert.symbol)} — ${conditionLabel(alert)}`,
+            {
+              duration: 8000,
+            },
+          );
+          return {
+            ...alert,
+            triggered: true,
+            triggeredAt: new Date().toISOString(),
+          };
         }
         return alert;
       });
@@ -122,22 +153,35 @@ export default function AlertsPage() {
     });
   }, [quotes]);
 
-  useEffect(() => { checkAlerts(); }, [checkAlerts]);
+  useEffect(() => {
+    checkAlerts();
+  }, [checkAlerts]);
 
   const handleSearch = async () => {
     if (!searchQuery.trim()) return;
     setIsSearching(true);
     try {
-      const res = await fetch(apiUrl(`/stocks/search?q=${encodeURIComponent(searchQuery)}`));
+      const res = await fetch(
+        apiUrl(`/stocks/search?q=${encodeURIComponent(searchQuery)}`),
+      );
       setSearchResults(await res.json());
-    } catch { toast.error("Search failed"); }
-    finally { setIsSearching(false); }
+    } catch {
+      toast.error("Search failed");
+    } finally {
+      setIsSearching(false);
+    }
   };
 
   const addAlert = () => {
-    if (!selectedSymbol) { toast.error("Select a stock first"); return; }
+    if (!selectedSymbol) {
+      toast.error("Select a stock first");
+      return;
+    }
     const v = parseFloat(value);
-    if (isNaN(v)) { toast.error("Enter a valid threshold value"); return; }
+    if (isNaN(v)) {
+      toast.error("Enter a valid threshold value");
+      return;
+    }
     const alert: Alert = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
       symbol: selectedSymbol,
@@ -174,7 +218,7 @@ export default function AlertsPage() {
   const quoteMap = new Map(quotes?.map((q) => [q.symbol, q]) ?? []);
 
   return (
-    <div className="space-y-6 max-w-screen-xl">
+    <div className="space-y-6 max-w-7xl">
       <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
@@ -198,7 +242,9 @@ export default function AlertsPage() {
 
         {/* Step 1: Search stock */}
         <div className="space-y-2">
-          <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">1. Search Stock</label>
+          <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+            1. Search Stock
+          </label>
           <div className="flex gap-2">
             <Input
               placeholder="Search by name or symbol…"
@@ -207,7 +253,12 @@ export default function AlertsPage() {
               onKeyDown={(e) => e.key === "Enter" && handleSearch()}
               className="max-w-xs"
             />
-            <Button size="sm" variant="secondary" onClick={handleSearch} disabled={isSearching}>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={handleSearch}
+              disabled={isSearching}
+            >
               <Search className="h-4 w-4" />
             </Button>
           </div>
@@ -223,11 +274,19 @@ export default function AlertsPage() {
                 <button
                   key={r.symbol}
                   className="w-full flex items-center justify-between px-3 py-2 bg-card hover:bg-accent/30 transition-colors text-left"
-                  onClick={() => { setSelectedSymbol(r.symbol); setSearchResults([]); setSearchQuery(r.symbol.replace(".NS", "")); }}
+                  onClick={() => {
+                    setSelectedSymbol(r.symbol);
+                    setSearchResults([]);
+                    setSearchQuery(r.symbol.replace(".NS", ""));
+                  }}
                 >
                   <div>
-                    <span className="font-semibold text-sm">{displaySymbol(r.symbol)}</span>
-                    <span className="ml-2 text-xs text-muted-foreground">{r.shortname}</span>
+                    <span className="font-semibold text-sm">
+                      {displaySymbol(r.symbol)}
+                    </span>
+                    <span className="ml-2 text-xs text-muted-foreground">
+                      {r.shortname}
+                    </span>
                   </div>
                 </button>
               ))}
@@ -237,15 +296,21 @@ export default function AlertsPage() {
 
         {/* Step 2: Set condition */}
         <div className="space-y-2">
-          <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">2. Set Condition</label>
+          <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+            2. Set Condition
+          </label>
           <div className="flex gap-2 flex-wrap">
             <select
               value={condition}
-              onChange={(e) => setCondition(e.target.value as Alert["condition"])}
+              onChange={(e) =>
+                setCondition(e.target.value as Alert["condition"])
+              }
               className="rounded-md border bg-background px-3 py-2 text-sm"
             >
               {CONDITIONS.map((c) => (
-                <option key={c.value} value={c.value}>{c.label}</option>
+                <option key={c.value} value={c.value}>
+                  {c.label}
+                </option>
               ))}
             </select>
             <Input
@@ -269,23 +334,42 @@ export default function AlertsPage() {
         <div className="rounded-xl border bg-card overflow-hidden">
           <div className="px-5 py-3 border-b flex items-center gap-2">
             <Bell className="h-4 w-4 text-yellow-500" />
-            <h2 className="font-semibold text-sm">Active Alerts ({active.length})</h2>
+            <h2 className="font-semibold text-sm">
+              Active Alerts ({active.length})
+            </h2>
           </div>
           <div className="divide-y">
             {active.map((alert) => {
               const q = quoteMap.get(alert.symbol);
               return (
-                <div key={alert.id} className="flex items-center gap-4 px-5 py-3 hover:bg-accent/20 transition-colors">
+                <div
+                  key={alert.id}
+                  className="flex items-center gap-4 px-5 py-3 hover:bg-accent/20 transition-colors"
+                >
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className="font-bold text-sm">{displaySymbol(alert.symbol)}</span>
-                      <span className="text-xs bg-muted text-muted-foreground rounded px-1.5 py-0.5">{conditionLabel(alert)}</span>
+                      <span className="font-bold text-sm">
+                        {displaySymbol(alert.symbol)}
+                      </span>
+                      <span className="text-xs bg-muted text-muted-foreground rounded px-1.5 py-0.5">
+                        {conditionLabel(alert)}
+                      </span>
                     </div>
                     <div className="text-xs text-muted-foreground mt-0.5">
-                      Current: {q?.regularMarketPrice != null ? formatPrice(q.regularMarketPrice) : "—"}
+                      Current:{" "}
+                      {q?.regularMarketPrice != null
+                        ? formatPrice(q.regularMarketPrice)
+                        : "—"}
                       {q?.regularMarketChangePercent != null && (
-                        <span className={q.regularMarketChangePercent >= 0 ? "text-green-500 ml-2" : "text-red-500 ml-2"}>
-                          {q.regularMarketChangePercent >= 0 ? "+" : ""}{q.regularMarketChangePercent.toFixed(2)}%
+                        <span
+                          className={
+                            q.regularMarketChangePercent >= 0
+                              ? "text-green-500 ml-2"
+                              : "text-red-500 ml-2"
+                          }
+                        >
+                          {q.regularMarketChangePercent >= 0 ? "+" : ""}
+                          {q.regularMarketChangePercent.toFixed(2)}%
                         </span>
                       )}
                     </div>
@@ -313,24 +397,38 @@ export default function AlertsPage() {
         <div className="rounded-xl border border-green-500/30 bg-green-500/5 overflow-hidden">
           <div className="px-5 py-3 border-b border-green-500/30 flex items-center gap-2">
             <CheckCircle2 className="h-4 w-4 text-green-500" />
-            <h2 className="font-semibold text-sm text-green-500">Triggered Alerts ({triggered.length})</h2>
+            <h2 className="font-semibold text-sm text-green-500">
+              Triggered Alerts ({triggered.length})
+            </h2>
           </div>
           <div className="divide-y divide-green-500/10">
             {triggered.map((alert) => (
               <div key={alert.id} className="flex items-center gap-4 px-5 py-3">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
-                    <span className="font-bold text-sm">{displaySymbol(alert.symbol)}</span>
-                    <span className="text-xs bg-green-500/20 text-green-400 rounded px-1.5 py-0.5">{conditionLabel(alert)}</span>
-                    <span className="text-[10px] text-green-500 font-bold">✓ TRIGGERED</span>
+                    <span className="font-bold text-sm">
+                      {displaySymbol(alert.symbol)}
+                    </span>
+                    <span className="text-xs bg-green-500/20 text-green-400 rounded px-1.5 py-0.5">
+                      {conditionLabel(alert)}
+                    </span>
+                    <span className="text-[10px] text-green-500 font-bold">
+                      ✓ TRIGGERED
+                    </span>
                   </div>
                   {alert.triggeredAt && (
                     <div className="text-xs text-muted-foreground mt-0.5">
-                      Triggered at {new Date(alert.triggeredAt).toLocaleString("en-IN")}
+                      Triggered at{" "}
+                      {new Date(alert.triggeredAt).toLocaleString("en-IN")}
                     </div>
                   )}
                 </div>
-                <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-red-500" onClick={() => removeAlert(alert.id)}>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 text-muted-foreground hover:text-red-500"
+                  onClick={() => removeAlert(alert.id)}
+                >
                   <Trash2 className="h-3.5 w-3.5" />
                 </Button>
               </div>
@@ -343,7 +441,10 @@ export default function AlertsPage() {
         <div className="py-20 text-center rounded-xl border bg-card">
           <AlertTriangle className="h-10 w-10 text-muted-foreground/20 mx-auto mb-3" />
           <p className="font-medium text-muted-foreground">No alerts set</p>
-          <p className="text-xs text-muted-foreground/60 mt-1">Create an alert above to get notified when price or % change conditions are met</p>
+          <p className="text-xs text-muted-foreground/60 mt-1">
+            Create an alert above to get notified when price or % change
+            conditions are met
+          </p>
         </div>
       )}
     </div>

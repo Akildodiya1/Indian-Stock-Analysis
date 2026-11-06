@@ -38,6 +38,7 @@ const NAV_GROUPS = [
     label: "Analytics",
     items: [
       { href: "/market-breadth", label: "Market Breadth", icon: Gauge },
+      { href: "/chart", label: "Chart Tool", icon: BarChart3 },
       { href: "/industry-rotation", label: "Industry Rotation", icon: RotateCcw },
       { href: "/index-analytics", label: "Index Analytics", icon: BarChart3 },
       { href: "/futures", label: "Futures Dashboard", icon: Layers },

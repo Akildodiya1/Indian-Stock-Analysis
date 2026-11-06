@@ -169,15 +169,23 @@ async function fetchChartMeta(symbol: string): Promise<YFQuote | null> {
     if (!meta) return null;
 
     const price = meta.regularMarketPrice ?? 0;
-    const prevClose = meta.chartPreviousClose ?? 0;
+    const quotes = result?.indicators?.quote?.[0];
+    const timestamps = result?.timestamp ?? [];
+    // Yahoo's chartPreviousClose can be the first close in a multi-day range.
+    const previousDailyClose = quotes?.close
+      ?.slice(0, -1)
+      .reverse()
+      .find((close) => close != null && Number.isFinite(close) && close > 0);
+    const prevClose = isIndex
+      ? meta.chartPreviousClose ?? 0
+      : previousDailyClose ?? meta.chartPreviousClose ?? 0;
     const change = prevClose > 0 ? price - prevClose : 0;
     const changePercent = prevClose > 0 ? (change / prevClose) * 100 : 0;
 
-    const quotes = result?.indicators?.quote?.[0];
-    const timestamps = result?.timestamp ?? [];
     const prevDayIdx = timestamps.length >= 2 ? timestamps.length - 2 : -1;
+    const marketOpenIdx = isIndex ? prevDayIdx : timestamps.length - 1;
     const open =
-      prevDayIdx >= 0 ? (quotes?.open?.[prevDayIdx] ?? price) : price;
+      marketOpenIdx >= 0 ? (quotes?.open?.[marketOpenIdx] ?? price) : price;
 
     return {
       symbol,
@@ -1372,72 +1380,275 @@ export interface HeatmapSector {
   topStocks: string[];
 }
 
-/* ─── History table (66 days) ──────────────────────────────────────────── */
+/* ─── Price history table ──────────────────────────────────────────────── */
+export const HISTORY_TABLE_PAGE_SIZE = 20;
+
 export interface HistoryTableRow {
-  date: string; // "DD Mon"
+  date: string; // "YYYY-MM-DD"
   timestamp: number;
   open: number;
   high: number;
   low: number;
   close: number;
   volume: number;
+  deliveryQty: number | null;
+  marketCapCr: number | null;
+  deliveryValueCr: number | null;
+  deliveryPct: number | null;
+  amountSurge: number | null;
+  tradeSurge: number | null;
+  deliverySurge: number | null;
   change1d: number;
   change5d: number | null;
   change22d: number | null;
   change66d: number | null;
-  rsi: number | null;
 }
 
-function computeRSI14(closes: number[]): (number | null)[] {
-  const period = 14;
-  const rsi: (number | null)[] = new Array(period).fill(null);
-  if (closes.length <= period) return rsi;
-  let gains = 0,
-    losses = 0;
-  for (let i = 1; i <= period; i++) {
-    const diff = closes[i] - closes[i - 1];
-    if (diff > 0) gains += diff;
-    else losses -= diff;
+export interface HistoryTablePage {
+  rows: HistoryTableRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+interface NseDeliveryMetrics {
+  deliveryValueCr: number;
+  deliveryQty: number;
+  deliveryPct: number;
+  tradedQty: number;
+  tradeCount: number;
+}
+
+const nseDeliveryMetricsCache = new Map<
+  string,
+  { expiresAt: number; value: NseDeliveryMetrics | null }
+>();
+const nseDeliveryMetricsRequests = new Map<
+  string,
+  Promise<NseDeliveryMetrics | null>
+>();
+
+function getNseDateParts(timestamp: number) {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(timestamp * 1000));
+  const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
+  return {
+    archiveDate: `${values.day}${values.month}${values.year}`,
+    isoDate: `${values.year}-${values.month}-${values.day}`,
+  };
+}
+
+async function fetchNseDeliveryMetrics(
+  symbol: string,
+  timestamp: number,
+): Promise<NseDeliveryMetrics | null> {
+  const { archiveDate, isoDate } = getNseDateParts(timestamp);
+  const cacheKey = `${symbol}:${archiveDate}`;
+  const cached = nseDeliveryMetricsCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  const pending = nseDeliveryMetricsRequests.get(cacheKey);
+  if (pending) return pending;
+
+  const request = (async () => {
+    const response = await fetch(
+      `https://archives.nseindia.com/products/content/sec_bhavdata_full_${archiveDate}.csv`,
+      {
+        headers: {
+          "User-Agent": HEADERS["User-Agent"],
+          Accept: "text/csv,*/*",
+        },
+        signal: AbortSignal.timeout(10_000),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(
+        `NSE bhavcopy request failed: ${response.status} (${isoDate})`,
+      );
+    }
+
+    const csv = await response.text();
+    const rows = csv.split(/\r?\n/);
+    const record = rows.find((row) => row.startsWith(`${symbol},`));
+    if (!record) return null;
+
+    const fields = record.split(",").map((field) => field.trim());
+    if (fields[1] !== "EQ") return null;
+    if (
+      !fields[4] ||
+      !fields[5] ||
+      !fields[6] ||
+      !fields[8] ||
+      !fields[10] ||
+      !fields[12] ||
+      !fields[13] ||
+      !fields[14]
+    ) {
+      return null;
+    }
+
+    const open = Number(fields[4]);
+    const high = Number(fields[5]);
+    const low = Number(fields[6]);
+    const close = Number(fields[8]);
+    const tradedQty = Number(fields[10]);
+    const tradeCount = Number(fields[12]);
+    const deliveryQuantity = Number(fields[13]);
+    const deliveryPct = Number(fields[14]);
+    if (
+      !Number.isFinite(open) ||
+      !Number.isFinite(high) ||
+      !Number.isFinite(low) ||
+      !Number.isFinite(close) ||
+      !Number.isFinite(tradedQty) ||
+      !Number.isFinite(tradeCount) ||
+      !Number.isFinite(deliveryQuantity) ||
+      !Number.isFinite(deliveryPct)
+    ) {
+      return null;
+    }
+
+    return {
+      deliveryValueCr:
+        (((open + high + low + close) / 4) * deliveryQuantity) / 10_000_000,
+      deliveryQty: deliveryQuantity,
+      deliveryPct,
+      tradedQty,
+      tradeCount,
+    };
+  })();
+  nseDeliveryMetricsRequests.set(cacheKey, request);
+  try {
+    const value = await request;
+    nseDeliveryMetricsCache.set(cacheKey, {
+      expiresAt: Date.now() + 6 * 60 * 60 * 1000,
+      value,
+    });
+    return value;
+  } finally {
+    nseDeliveryMetricsRequests.delete(cacheKey);
   }
-  let avgGain = gains / period,
-    avgLoss = losses / period;
-  rsi.push(avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss));
-  for (let i = period + 1; i < closes.length; i++) {
-    const diff = closes[i] - closes[i - 1];
-    avgGain = (avgGain * (period - 1) + Math.max(diff, 0)) / period;
-    avgLoss = (avgLoss * (period - 1) + Math.max(-diff, 0)) / period;
-    rsi.push(avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss));
-  }
-  return rsi;
 }
 
 export async function fetchHistoryTable(
   symbol: string,
-): Promise<HistoryTableRow[]> {
-  // Fetch 6 months to have enough data for 66D lookback + RSI(14) warm-up
-  const hist = await fetchHistory(symbol, "6mo", "1d");
-  if (hist.length === 0) return [];
+  requestedPage = 0,
+  requestedDays = 330,
+): Promise<HistoryTablePage> {
+  const hist = await fetchHistory(symbol, "2y", "1d");
+  if (hist.length === 0) {
+    return {
+      rows: [],
+      total: 0,
+      page: 0,
+      pageSize: HISTORY_TABLE_PAGE_SIZE,
+    };
+  }
 
   const closes = hist.map((h) => h.close);
-  const rsiArr = computeRSI14(closes);
+  const total = Math.min(requestedDays === 195 ? 195 : 330, hist.length);
+  const pageCount = Math.ceil(total / HISTORY_TABLE_PAGE_SIZE);
+  const page = Math.min(Math.max(0, requestedPage), pageCount - 1);
+  const pageStart = page * HISTORY_TABLE_PAGE_SIZE;
+  const selectedStart = hist.length - total;
+  const endExclusive = hist.length - pageStart;
+  const visibleStart = Math.max(
+    selectedStart,
+    endExclusive - HISTORY_TABLE_PAGE_SIZE,
+  );
+  const metricsStart = Math.max(0, visibleStart - 20);
+  const metricsHistory = hist.slice(metricsStart, endExclusive);
+  const visibleHistory = metricsHistory
+    .slice(visibleStart - metricsStart)
+    .reverse();
+  const nseSymbol = /\.NS$/i.test(symbol)
+    ? symbol.replace(/\.NS$/i, "").toUpperCase()
+    : null;
+  const deliveryByTimestamp = new Map<number, NseDeliveryMetrics | null>();
+  let failedArchives = 0;
+  let firstArchiveError: unknown;
+  let sharesOutstanding: number | null = null;
+  if (/\.NS$/i.test(symbol)) {
+    const summary = await fetchSummary(symbol);
+    const marketCap = summary.summaryDetail?.marketCap?.raw;
+    const currentPrice = summary.price?.regularMarketPrice?.raw;
+    const reportedShares = summary.defaultKeyStatistics?.sharesOutstanding?.raw;
+    sharesOutstanding =
+      reportedShares != null && reportedShares > 0
+        ? reportedShares
+        : marketCap != null && currentPrice != null && currentPrice > 0
+          ? marketCap / currentPrice
+          : null;
+  }
+
+  if (nseSymbol) {
+    const batchSize = 8;
+    for (let offset = 0; offset < metricsHistory.length; offset += batchSize) {
+      const batch = metricsHistory.slice(offset, offset + batchSize);
+      const results = await Promise.all(
+        batch.map(async (point) => {
+          try {
+            return {
+              timestamp: point.timestamp,
+              metrics: await fetchNseDeliveryMetrics(nseSymbol, point.timestamp),
+            };
+          } catch (error) {
+            return { timestamp: point.timestamp, error };
+          }
+        }),
+      );
+
+      for (const result of results) {
+        if ("error" in result) {
+          failedArchives++;
+          firstArchiveError ??= result.error;
+          deliveryByTimestamp.set(result.timestamp, null);
+        } else {
+          deliveryByTimestamp.set(result.timestamp, result.metrics);
+        }
+      }
+
+      if (offset === 0 && results.every((result) => "error" in result)) break;
+    }
+
+    if (failedArchives > 0) {
+      console.warn(
+        `NSE delivery history unavailable for ${failedArchives} date(s) for ${symbol}; showing unavailable values.`,
+        firstArchiveError,
+      );
+    }
+  }
 
   const rows: HistoryTableRow[] = [];
-  // Only return last 80 rows (plenty for display)
-  const start = Math.max(0, hist.length - 80);
-
-  for (let i = start; i < hist.length; i++) {
-    const h = hist[i];
+  for (let offset = 0; offset < visibleHistory.length; offset++) {
+    const h = visibleHistory[offset];
+    const i = hist.indexOf(h);
     const c = closes[i];
     const prev = closes[i - 1] ?? c;
     const change1d = prev > 0 ? ((c - prev) / prev) * 100 : 0;
-    const c5 = i >= 5 ? closes[i - 5] : null;
-    const c22 = i >= 22 ? closes[i - 22] : null;
-    const c66 = i >= 66 ? closes[i - 66] : null;
-    const d = new Date(h.timestamp * 1000);
-    const dateStr = d.toLocaleDateString("en-IN", {
-      day: "2-digit",
-      month: "short",
-    });
+    const c5 = i >= 4 ? closes[i - 4] : null;
+    const c22 = i >= 21 ? closes[i - 21] : null;
+    const c66 = i >= 65 ? closes[i - 65] : null;
+    const dateStr = getNseDateParts(h.timestamp).isoDate;
+    const deliveryMetrics = deliveryByTimestamp.get(h.timestamp) ?? null;
+    const previousMetrics = metricsHistory
+      .slice(
+        Math.max(0, metricsHistory.length - offset - 21),
+        metricsHistory.length - offset - 1,
+      )
+      .map((point) => deliveryByTimestamp.get(point.timestamp))
+      .filter((metrics): metrics is NseDeliveryMetrics => metrics != null);
+    const average = (select: (metrics: NseDeliveryMetrics) => number) =>
+      previousMetrics.length > 0
+        ? previousMetrics.reduce((sum, metrics) => sum + select(metrics), 0) /
+          previousMetrics.length
+        : null;
+    const averageAmount = average((metrics) => metrics.deliveryValueCr);
+    const averageTrades = average((metrics) => metrics.tradeCount);
+    const averageDelivery = average((metrics) => metrics.deliveryQty);
     rows.push({
       date: dateStr,
       timestamp: h.timestamp,
@@ -1445,15 +1656,33 @@ export async function fetchHistoryTable(
       high: h.high,
       low: h.low,
       close: h.close,
-      volume: h.volume,
+      volume: deliveryMetrics?.tradedQty ?? h.volume,
+      deliveryQty: deliveryMetrics?.deliveryQty ?? null,
+      marketCapCr:
+        sharesOutstanding != null
+          ? (sharesOutstanding * h.close) / 10_000_000
+          : null,
+      deliveryValueCr: deliveryMetrics?.deliveryValueCr ?? null,
+      deliveryPct: deliveryMetrics?.deliveryPct ?? null,
+      amountSurge:
+        deliveryMetrics != null && averageAmount != null && averageAmount > 0
+          ? deliveryMetrics.deliveryValueCr / averageAmount
+          : null,
+      tradeSurge:
+        deliveryMetrics != null && averageTrades != null && averageTrades > 0
+          ? deliveryMetrics.tradeCount / averageTrades
+          : null,
+      deliverySurge:
+        deliveryMetrics != null && averageDelivery != null && averageDelivery > 0
+          ? deliveryMetrics.deliveryQty / averageDelivery
+          : null,
       change1d,
       change5d: c5 != null ? ((c - c5) / c5) * 100 : null,
       change22d: c22 != null ? ((c - c22) / c22) * 100 : null,
       change66d: c66 != null ? ((c - c66) / c66) * 100 : null,
-      rsi: rsiArr[i] ?? null,
     });
   }
-  return rows.reverse(); // most recent first
+  return { rows, total, page, pageSize: HISTORY_TABLE_PAGE_SIZE };
 }
 
 // suppress unused import warning

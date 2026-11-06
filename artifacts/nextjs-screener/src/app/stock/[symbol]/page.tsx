@@ -2,7 +2,7 @@
 
 import { useParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   ComposedChart, LineChart, Line, Bar, Area, XAxis, YAxis, Tooltip,
@@ -54,7 +54,16 @@ interface Fundamental {
 interface HistoryPoint { timestamp: number; open: number; high: number; low: number; close: number; volume: number }
 interface HistoryRow {
   date: string; timestamp: number; open: number; high: number; low: number; close: number;
-  volume: number; change1d: number; change5d: number | null; change22d: number | null; change66d: number | null; rsi: number | null;
+  volume: number; deliveryQty: number | null; marketCapCr: number | null;
+  deliveryValueCr: number | null; deliveryPct: number | null;
+  amountSurge: number | null; tradeSurge: number | null; deliverySurge: number | null;
+  change1d: number; change5d: number | null; change22d: number | null; change66d: number | null; rsi: number | null;
+}
+interface HistoryTableData {
+  rows: HistoryRow[];
+  total: number;
+  page: number;
+  pageSize: number;
 }
 interface CorporateAction {
   date: string;
@@ -90,6 +99,7 @@ const PERIODS = [
 ];
 const TECHNICAL_VIEWS = ["Charts", "Volume & Delivery", "Price History"] as const;
 type TechnicalView = (typeof TECHNICAL_VIEWS)[number];
+const HISTORY_PAGE_SIZE = 20;
 
 /* ─── RSI computation ───────────────────────────────────────────────────── */
 function computeRSI(closes: number[], period = 14): (number | null)[] {
@@ -136,6 +146,19 @@ function timeAgo(ts: number): string {
 function pctCell(v: number | null): string {
   if (v == null) return "—";
   return `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
+}
+
+function compactNumber(value: number | null, fractionDigits = 0): string {
+  if (value == null || Number.isNaN(value)) return "—";
+  return new Intl.NumberFormat("en-IN", {
+    maximumFractionDigits: fractionDigits,
+    minimumFractionDigits: fractionDigits,
+  }).format(value);
+}
+
+function ratioDisplay(value: number | null): string {
+  if (value == null || Number.isNaN(value)) return "—";
+  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}x`;
 }
 
 async function fetchStockData<T>(url: string): Promise<T> {
@@ -312,7 +335,12 @@ export default function StockPage() {
   const [period, setPeriod] = useState(PERIODS[2]);
   const [activeTab, setActiveTab] = useState<InsightTab>("Advanced Insights");
   const [technicalView, setTechnicalView] = useState<TechnicalView>("Charts");
+  const [historyPage, setHistoryPage] = useState(0);
   const queryClient = useQueryClient();
+
+  useEffect(() => {
+    setHistoryPage(0);
+  }, [rawSymbol]);
 
   const { data: quote, isLoading: quoteLoading } = useQuery<Quote>({
     queryKey: ["stock", "quote", rawSymbol],
@@ -341,12 +369,26 @@ export default function StockPage() {
       fetch(apiUrl(`/stocks/history/${encodeURIComponent(rawSymbol)}?period=${period.value}&interval=${period.interval}`)).then(r => r.json()),
     enabled: !!rawSymbol,
   });
-  const { data: historyTable = [], isLoading: tableLoading } = useQuery<HistoryRow[]>({
-    queryKey: ["stock", "history-table", rawSymbol],
-    queryFn: () => fetch(apiUrl(`/stocks/history-table/${encodeURIComponent(rawSymbol)}`)).then(r => r.json()),
+  const {
+    data: historyTableData,
+    isLoading: tableLoading,
+    isError: tableError,
+  } = useQuery<HistoryTableData>({
+    queryKey: ["stock", "history-table", rawSymbol, historyPage],
+    queryFn: async () => {
+      const response = await fetch(
+        apiUrl(
+          `/stocks/history-table/${encodeURIComponent(rawSymbol)}?page=${historyPage}`,
+        ),
+      );
+      if (!response.ok) throw new Error("Historical stock data is unavailable.");
+      return response.json();
+    },
     enabled: !!rawSymbol && activeTab === "Technicals" && technicalView === "Price History",
     staleTime: 10 * 60 * 1000,
   });
+  const historyTable = historyTableData?.rows ?? [];
+  const historyTableTotal = historyTableData?.total ?? 0;
   const { data: stockNews = [], isLoading: newsLoading } = useQuery<NewsItem[]>({
     queryKey: ["stock", "news", rawSymbol],
     queryFn: () => fetch(apiUrl(`/stocks/news/${encodeURIComponent(rawSymbol)}`)).then(r => r.json()),
@@ -436,6 +478,8 @@ export default function StockPage() {
   const high52 = quote?.fiftyTwoWeekHigh ?? 0;
   const price = quote?.regularMarketPrice ?? 0;
   const rangePct = high52 > low52 ? ((price - low52) / (high52 - low52)) * 100 : 50;
+  const historyPageCount = Math.ceil(historyTableTotal / HISTORY_PAGE_SIZE);
+  const pageStart = historyPage * HISTORY_PAGE_SIZE;
 
   return (
     <div className="stock-detail-page space-y-5 max-w-7xl">
@@ -565,6 +609,13 @@ export default function StockPage() {
               {view}
             </button>
           ))}
+          <Link
+            href={`/chart?symbol=${encodeURIComponent(rawSymbol.replace(/\.(NS|BO)$/i, ""))}&exchange=${/\.BO$/i.test(rawSymbol) ? "BSE" : "NSE"}`}
+            className="ml-auto inline-flex items-center gap-1.5 whitespace-nowrap rounded-md border px-3 py-1.5 text-xs font-medium hover:bg-accent"
+          >
+            <BarChart3 className="h-3.5 w-3.5" />
+            Open full chart
+          </Link>
         </div>
       )}
 
@@ -826,25 +877,58 @@ export default function StockPage() {
       {/* Price History view */}
       {activeTab === "Technicals" && technicalView === "Price History" && (
         <div className="rounded-lg border bg-card overflow-hidden">
-          <div className="px-4 py-3 border-b flex items-center justify-between">
-            <span className="font-semibold text-sm">Historical Data</span>
-            <span className="text-xs text-muted-foreground">{historyTable.length} days · Date | Open | High | Low | Close | 1D% | 5D% | 22D% | 66D% | RSI | Volume</span>
+          <div className="px-4 py-3 border-b flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <span className="font-semibold text-sm">Historical Data — {displaySymbol(rawSymbol)}</span>
+              <p className="mt-1 text-[10px] text-muted-foreground">
+                Amt Inv = delivered quantity × daily OHLC average ÷ 1 crore; — means NSE delivery data is unavailable.
+              </p>
+            </div>
+            {historyTableTotal > 0 && (
+              <span className="text-xs text-muted-foreground">
+                Showing {pageStart + 1}–{Math.min(pageStart + HISTORY_PAGE_SIZE, historyTableTotal)} of {historyTableTotal}
+              </span>
+            )}
           </div>
           {tableLoading ? (
             <div className="p-8 text-center text-muted-foreground text-sm">Loading historical data…</div>
+          ) : tableError ? (
+            <div role="alert" className="p-8 text-center text-amber-500 text-sm">
+              Historical price data is unavailable. Please try again later.
+            </div>
+          ) : historyTableTotal === 0 ? (
+            <div className="p-8 text-center text-muted-foreground text-sm">
+              No historical data available.
+            </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
                 <thead>
                   <tr className="border-b bg-muted/30">
-                    {["Date","Open","High","Low","Close","1D%","5D%","22D%","66D%","RSI","Volume"].map(h => (
+                    {[
+                      "Date",
+                      "Open",
+                      "High",
+                      "Low",
+                      "Close",
+                      "Amt Inv (Cr)",
+                      "1D%",
+                      "5D%",
+                      "22D%",
+                      "66D%",
+                      "Delivery",
+                      "Market Cap (Cr)",
+                      "Del%",
+                      "Amt Surge (X)",
+                      "Trade Surge (X)",
+                      "Deliv. Surge (X)",
+                    ].map((h) => (
                       <th key={h} className="px-3 py-2 text-left font-semibold text-muted-foreground whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {historyTable.slice(0, 80).map(row => {
-                    const rsiColor = row.rsi == null ? "" : row.rsi > 70 ? "text-red-500" : row.rsi < 30 ? "text-green-500" : "text-amber-400";
+                  {historyTable.map((row) => {
                     return (
                       <tr key={row.timestamp} className="border-b hover:bg-accent/30 transition-colors">
                         <td className="px-3 py-2 font-medium tabular-nums">{row.date}</td>
@@ -852,17 +936,64 @@ export default function StockPage() {
                         <td className="px-3 py-2 tabular-nums">₹{row.high.toFixed(2)}</td>
                         <td className="px-3 py-2 tabular-nums">₹{row.low.toFixed(2)}</td>
                         <td className="px-3 py-2 tabular-nums font-semibold">₹{row.close.toFixed(2)}</td>
+                        <td className="px-3 py-2 tabular-nums text-muted-foreground">
+                          {row.deliveryValueCr != null
+                            ? row.deliveryValueCr.toLocaleString("en-IN", {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              })
+                            : "—"}
+                        </td>
                         <td className={`px-3 py-2 tabular-nums ${changeColor(row.change1d)}`}>{pctCell(row.change1d)}</td>
                         <td className={`px-3 py-2 tabular-nums ${changeColor(row.change5d)}`}>{pctCell(row.change5d)}</td>
                         <td className={`px-3 py-2 tabular-nums ${changeColor(row.change22d)}`}>{pctCell(row.change22d)}</td>
                         <td className={`px-3 py-2 tabular-nums ${changeColor(row.change66d)}`}>{pctCell(row.change66d)}</td>
-                        <td className={`px-3 py-2 tabular-nums font-semibold ${rsiColor}`}>{row.rsi != null ? row.rsi.toFixed(0) : "—"}</td>
-                        <td className="px-3 py-2 tabular-nums text-muted-foreground">{formatVolume(row.volume)}</td>
+                        <td className="px-3 py-2 tabular-nums text-muted-foreground">
+                          {row.deliveryQty != null ? compactNumber(row.deliveryQty, 0) : "—"}
+                        </td>
+                        <td className="px-3 py-2 tabular-nums text-muted-foreground">
+                          {row.marketCapCr != null ? compactNumber(row.marketCapCr, 2) : "—"}
+                        </td>
+                        <td className="px-3 py-2 tabular-nums text-muted-foreground">
+                          {row.deliveryPct != null ? `${row.deliveryPct.toFixed(1)}%` : "—"}
+                        </td>
+                        <td className="px-3 py-2 tabular-nums text-muted-foreground">
+                          {ratioDisplay(row.amountSurge)}
+                        </td>
+                        <td className="px-3 py-2 tabular-nums text-muted-foreground">
+                          {ratioDisplay(row.tradeSurge)}
+                        </td>
+                        <td className="px-3 py-2 tabular-nums text-muted-foreground">
+                          {ratioDisplay(row.deliverySurge)}
+                        </td>
                       </tr>
                     );
                   })}
                 </tbody>
               </table>
+              {historyPageCount > 1 && (
+                <div className="flex items-center justify-end gap-2 border-t px-4 py-2">
+                  <button
+                    type="button"
+                    className="rounded border px-2 py-1 text-xs text-muted-foreground disabled:opacity-40"
+                    onClick={() => setHistoryPage((page) => Math.max(0, page - 1))}
+                    disabled={historyPage === 0}
+                  >
+                    Previous
+                  </button>
+                  <span className="text-xs text-muted-foreground">
+                    Page {historyPage + 1} of {historyPageCount}
+                  </span>
+                  <button
+                    type="button"
+                    className="rounded border px-2 py-1 text-xs text-muted-foreground disabled:opacity-40"
+                    onClick={() => setHistoryPage((page) => Math.min(historyPageCount - 1, page + 1))}
+                    disabled={historyPage >= historyPageCount - 1}
+                  >
+                    Next
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -87,7 +87,7 @@ const QUADRANT_BG: Record<string, string> = {
   Improving: "bg-cyan-500/10 text-cyan-500",
 };
 
-const TABS = ["Heatmap", "Performance Matrix", "RRG Chart", "Sector Performance", "Indices"] as const;
+const TABS = ["Heatmap", "RRG Chart", "Sector Performance", "Indices"] as const;
 type Tab = (typeof TABS)[number];
 type IndustrySortMetric = "1D" | "1W" | "1M" | "3M";
 type IndustrySortDirection = "asc" | "desc";
@@ -261,18 +261,32 @@ function IndustryRRGDot(props: {
   cy?: number;
   payload?: IndustryRrgPoint;
   selectedIndustry: string;
+  onSelect: (industry: string) => void;
 }) {
   const { cx = 0, cy = 0, payload } = props;
   if (!payload?.quadrant) return null;
   const color = QUADRANT_COLOR[payload.quadrant];
   const selected = payload.industry === props.selectedIndustry;
+  const radius = 15;
   return (
-    <g>
+    <g
+      role="button"
+      tabIndex={0}
+      aria-label={`Show ${payload.industry} stocks and performance`}
+      style={{ cursor: "pointer" }}
+      onClick={() => props.onSelect(payload.industry)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          props.onSelect(payload.industry);
+        }
+      }}
+    >
       {selected && (
         <circle
           cx={cx}
           cy={cy}
-          r={10}
+          r={radius + 4}
           fill="none"
           stroke="white"
           strokeOpacity={0.9}
@@ -282,12 +296,28 @@ function IndustryRRGDot(props: {
       <circle
         cx={cx}
         cy={cy}
-        r={selected ? 6 : 4.5}
+        r={radius}
         fill={color}
-        fillOpacity={selected ? 1 : 0.78}
-        stroke="hsl(222,47%,10%)"
-        strokeWidth={1}
+        fillOpacity={selected ? 1 : 0.88}
+        stroke="white"
+        strokeOpacity={0.65}
+        strokeWidth={1.5}
       />
+      <text
+        x={cx}
+        y={cy}
+        textAnchor="middle"
+        dominantBaseline="central"
+        fill="white"
+        fontSize={payload.industry.length > 10 ? 5 : 6}
+        fontWeight={700}
+        textLength={Math.min(26, Math.max(14, payload.industry.length * 3))}
+        lengthAdjust="spacingAndGlyphs"
+        pointerEvents="none"
+      >
+        {payload.industry}
+      </text>
+      <title>{`Open ${payload.industry} in the performance matrix`}</title>
     </g>
   );
 }
@@ -300,6 +330,7 @@ export default function SectorsPage() {
   const [industrySortMetric, setIndustrySortMetric] = useState<IndustrySortMetric>("1D");
   const [industrySortDirection, setIndustrySortDirection] = useState<IndustrySortDirection>("desc");
   const [matrixSignalFilter, setMatrixSignalFilter] = useState("All signals");
+  const [expandedMatrixIndustry, setExpandedMatrixIndustry] = useState<string | null>(null);
   const [selectedRrgIndustry, setSelectedRrgIndustry] = useState("All industries");
   const [rrgQuadrantFilter, setRrgQuadrantFilter] = useState<
     "All" | IndustryRrgPoint["quadrant"]
@@ -339,7 +370,6 @@ export default function SectorsPage() {
     staleTime: 15 * 60 * 1000,
     enabled:
       tab === "RRG Chart" ||
-      tab === "Performance Matrix" ||
       (tab === "Heatmap" && industrySortMetric !== "1D"),
   });
 
@@ -493,6 +523,19 @@ export default function SectorsPage() {
       return n;
     });
 
+  const selectRrgIndustry = (industry: string) => {
+    setSelectedRrgIndustry(industry);
+    setExpandedMatrixIndustry(industry);
+    setMatrixSignalFilter("All signals");
+  };
+
+  useEffect(() => {
+    if (!expandedMatrixIndustry) return;
+    document
+      .getElementById(`industry-matrix-${encodeURIComponent(expandedMatrixIndustry)}`)
+      ?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [expandedMatrixIndustry]);
+
   return (
     <div className="space-y-5 max-w-7xl">
       <div>
@@ -645,140 +688,6 @@ export default function SectorsPage() {
         </div>
       )}
 
-      {tab === "Performance Matrix" && (
-        <section className="space-y-4 rounded-lg border bg-card p-4">
-          <div className="flex flex-wrap items-end justify-between gap-3">
-            <div>
-              <h2 className="font-semibold">Industry Performance Matrix</h2>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Recent NSE sessions · market-cap-weighted top three stocks per industry · 5D return and 14D momentum versus the 66D pace
-              </p>
-            </div>
-            <div className="flex flex-wrap items-end gap-3">
-              <IndustrySortControls
-                metric={industrySortMetric}
-                direction={industrySortDirection}
-                onMetricChange={setIndustrySortMetric}
-                onDirectionToggle={() =>
-                  setIndustrySortDirection((direction) => direction === "desc" ? "asc" : "desc")
-                }
-              />
-              <label className="space-y-1">
-                <span className="block text-xs font-medium text-muted-foreground">Signal</span>
-                <Select value={matrixSignalFilter} onValueChange={setMatrixSignalFilter}>
-                  <SelectTrigger className="h-9 w-40">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {["All signals", "Strong", "Moderate", "Mixed / Weak", "Bearish"].map((signal) => (
-                      <SelectItem key={signal} value={signal}>{signal}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </label>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap gap-x-4 gap-y-2 border-y py-3 text-[11px] text-muted-foreground">
-            <span className="font-medium text-foreground">Signals:</span>
-            <span><b className="text-emerald-300">Strong</b> — 14D pace improving and 5D &gt; 1.5%</span>
-            <span><b className="text-green-300">Moderate</b> — improving and 5D ≥ 0.5%</span>
-            <span><b className="text-amber-300">Mixed / Weak</b> — mixed momentum</span>
-            <span><b className="text-red-300">Bearish</b> — below 66D pace and negative 5D</span>
-          </div>
-          <p className="text-[11px] text-muted-foreground">
-            14D vs 66D pace is the 14-day return minus the 66-day return scaled to a 14-day period. Signal filters keep industries that matched on at least one displayed session.
-          </p>
-
-          {industryRrgLoading ? (
-            <div className="flex h-48 items-center justify-center text-sm text-muted-foreground">
-              Loading recent industry history…
-            </div>
-          ) : industryRrgError ? (
-            <div role="alert" className="p-8 text-center text-sm text-amber-500">
-              Industry history is unavailable. Please try again later.
-            </div>
-          ) : visibleMatrixIndustries.length === 0 || matrixDates.length === 0 ? (
-            <div className="flex h-48 items-center justify-center text-sm text-muted-foreground">
-              No industry sessions match this signal filter.
-            </div>
-          ) : (
-            <div className="overflow-x-auto rounded-md border">
-              <table className="w-full min-w-300 border-collapse text-xs">
-                <thead>
-                  <tr className="bg-muted/40 text-left">
-                    <th className="sticky left-0 z-10 min-w-56 border-b border-r bg-muted/90 px-3 py-3 font-semibold">
-                      Industry
-                    </th>
-                    {matrixDates.map((date) => (
-                      <th key={date} className="min-w-44 border-b px-3 py-3 text-center font-semibold">
-                        {new Date(`${date}T12:00:00`).toLocaleDateString("en-IN", {
-                          day: "numeric",
-                          month: "short",
-                        })}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {visibleMatrixIndustries.map((industry) => {
-                    const snapshotsByDate = new Map(
-                      industry.snapshots.map((snapshot) => [snapshot.date, snapshot]),
-                    );
-                    const oneMonthGrowth = industry.change1m;
-                    return (
-                      <tr key={industry.industry} className="border-b last:border-0">
-                        <th className="sticky left-0 z-10 border-r bg-card px-3 py-2 text-left">
-                          <span className="block max-w-56 truncate font-semibold">{industry.industry}</span>
-                          <span className={`text-[10px] font-normal ${oneMonthGrowth == null ? "text-muted-foreground" : changeColor(oneMonthGrowth)}`}>
-                            1M {formatChangePercent(oneMonthGrowth)}
-                          </span>
-                        </th>
-                        {matrixDates.map((date) => {
-                          const snapshot = snapshotsByDate.get(date);
-                          if (!snapshot || snapshot.signal == null) {
-                            return (
-                              <td key={date} className="border-l p-2 text-center text-muted-foreground">—</td>
-                            );
-                          }
-                          const trendPositive = snapshot.trend14v66 != null && snapshot.trend14v66 > 0;
-                          const fiveDayPositive = snapshot.return5d != null && snapshot.return5d >= 0;
-                          return (
-                            <td
-                              key={date}
-                              title={`${industry.industry} · ${date} · ${snapshot.signal}`}
-                              className={`border-l p-2 ${MATRIX_SIGNAL_STYLES[snapshot.signal]}`}
-                            >
-                              <div className="space-y-1">
-                                <div className="flex items-center justify-between gap-1">
-                                  <span className="text-[9px] opacity-75">14D vs 66D pace</span>
-                                  <span className={`font-semibold tabular-nums ${trendPositive ? "text-emerald-300" : "text-red-300"}`}>
-                                    {formatChangePercent(snapshot.trend14v66)}
-                                  </span>
-                                </div>
-                                <div className="flex items-center justify-between gap-1">
-                                  <span className="text-[9px] opacity-75">5D</span>
-                                  <span className={`font-semibold tabular-nums ${fiveDayPositive ? "text-emerald-300" : "text-red-300"}`}>
-                                    {formatChangePercent(snapshot.return5d)}
-                                  </span>
-                                </div>
-                                <div className="border-t border-current/10 pt-1 text-center text-[9px] font-semibold">
-                                  {snapshot.signal}
-                                </div>
-                              </div>
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
-      )}
-
       {/* RRG Chart tab */}
       {tab === "RRG Chart" && (
         <div className="space-y-4">
@@ -854,7 +763,7 @@ export default function SectorsPage() {
                   </label>
                 </div>
                 <p className="mb-2 text-xs text-muted-foreground">
-                  Showing {visibleRrgPoints.length} of {industryRrgPoints.length} industries with sufficient history. Hover a dot for details; choose an industry to highlight it.
+                  Showing {visibleRrgPoints.length} of {industryRrgPoints.length} industries with sufficient history. Select a bubble to expand its stocks in the matrix below.
                 </p>
                 <ResponsiveContainer width="100%" height={440}>
                 <ScatterChart margin={{ top: 20, right: 30, bottom: 20, left: 30 }}>
@@ -888,7 +797,12 @@ export default function SectorsPage() {
                   />
                   <Scatter
                     data={visibleRrgPoints}
-                    shape={<IndustryRRGDot selectedIndustry={selectedRrgIndustry} />}
+                    shape={
+                      <IndustryRRGDot
+                        selectedIndustry={selectedRrgIndustry}
+                        onSelect={selectRrgIndustry}
+                      />
+                    }
                   >
                     {visibleRrgPoints.map((entry) => (
                       <Cell key={entry.industry} fill={QUADRANT_COLOR[entry.quadrant]} />
@@ -920,6 +834,212 @@ export default function SectorsPage() {
               </div>
             )}
           </div>
+
+          <section className="space-y-4 rounded-lg border bg-card p-4">
+            <div className="flex flex-wrap items-end justify-between gap-3">
+              <div>
+                <h2 className="font-semibold">Industry Performance Matrix</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Recent NSE sessions · market-cap-weighted top three stocks per industry · 5D return and 14D momentum versus the 66D pace
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Select an industry row or an RRG bubble to expand its stocks.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-end gap-3">
+                <IndustrySortControls
+                  metric={industrySortMetric}
+                  direction={industrySortDirection}
+                  onMetricChange={setIndustrySortMetric}
+                  onDirectionToggle={() =>
+                    setIndustrySortDirection((direction) => direction === "desc" ? "asc" : "desc")
+                  }
+                />
+                <label className="space-y-1">
+                  <span className="block text-xs font-medium text-muted-foreground">Signal</span>
+                  <Select value={matrixSignalFilter} onValueChange={setMatrixSignalFilter}>
+                    <SelectTrigger className="h-9 w-40">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {["All signals", "Strong", "Moderate", "Mixed / Weak", "Bearish"].map((signal) => (
+                        <SelectItem key={signal} value={signal}>{signal}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </label>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-x-4 gap-y-2 border-y py-3 text-[11px] text-muted-foreground">
+              <span className="font-medium text-foreground">Signals:</span>
+              <span><b className="text-emerald-300">Strong</b> — 14D pace improving and 5D &gt; 1.5%</span>
+              <span><b className="text-green-300">Moderate</b> — improving and 5D ≥ 0.5%</span>
+              <span><b className="text-amber-300">Mixed / Weak</b> — mixed momentum</span>
+              <span><b className="text-red-300">Bearish</b> — below 66D pace and negative 5D</span>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              14D vs 66D pace is the 14-day return minus the 66-day return scaled to a 14-day period. Signal filters keep industries that matched on at least one displayed session.
+            </p>
+
+            {industryRrgLoading ? (
+              <div className="flex h-48 items-center justify-center text-sm text-muted-foreground">
+                Loading recent industry history…
+              </div>
+            ) : industryRrgError ? (
+              <div role="alert" className="p-8 text-center text-sm text-amber-500">
+                Industry history is unavailable. Please try again later.
+              </div>
+            ) : visibleMatrixIndustries.length === 0 || matrixDates.length === 0 ? (
+              <div className="flex h-48 items-center justify-center text-sm text-muted-foreground">
+                No industry sessions match this signal filter.
+              </div>
+            ) : (
+              <div className="overflow-x-auto rounded-md border">
+                <table className="w-full min-w-300 border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-muted/40 text-left">
+                      <th className="sticky left-0 z-10 min-w-56 border-b border-r bg-muted/90 px-3 py-3 font-semibold">
+                        Industry · stocks
+                      </th>
+                      {matrixDates.map((date) => (
+                        <th key={date} className="min-w-44 border-b px-3 py-3 text-center font-semibold">
+                          {new Date(`${date}T12:00:00`).toLocaleDateString("en-IN", {
+                            day: "numeric",
+                            month: "short",
+                          })}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visibleMatrixIndustries.map((industry) => {
+                      const snapshotsByDate = new Map(
+                        industry.snapshots.map((snapshot) => [snapshot.date, snapshot]),
+                      );
+                      const oneMonthGrowth = industry.change1m;
+                      const isExpanded = expandedMatrixIndustry === industry.industry;
+                      const stocks = heatmap?.industries.find(
+                        (item) => item.industry === industry.industry,
+                      )?.stocks ?? [];
+                      return (
+                        <Fragment key={industry.industry}>
+                          <tr
+                            id={`industry-matrix-${encodeURIComponent(industry.industry)}`}
+                            className="border-b last:border-0"
+                          >
+                            <th className="sticky left-0 z-10 border-r bg-card px-2 py-2 text-left">
+                              <button
+                                type="button"
+                                aria-expanded={isExpanded}
+                                aria-controls={`industry-stocks-${encodeURIComponent(industry.industry)}`}
+                                onClick={() => {
+                                  setExpandedMatrixIndustry(isExpanded ? null : industry.industry);
+                                  setSelectedRrgIndustry(isExpanded ? "All industries" : industry.industry);
+                                }}
+                                className="flex w-full items-center gap-2 rounded px-1 py-1 text-left hover:bg-accent/50"
+                              >
+                                {isExpanded
+                                  ? <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                                  : <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                                }
+                                <span className="min-w-0">
+                                  <span className="block max-w-56 truncate font-semibold">{industry.industry}</span>
+                                  <span className={`block text-[10px] font-normal ${oneMonthGrowth == null ? "text-muted-foreground" : changeColor(oneMonthGrowth)}`}>
+                                    1M {formatChangePercent(oneMonthGrowth)} · {stocks.length || industry.stockCount} stocks
+                                  </span>
+                                </span>
+                              </button>
+                            </th>
+                            {matrixDates.map((date) => {
+                              const snapshot = snapshotsByDate.get(date);
+                              if (!snapshot || snapshot.signal == null) {
+                                return (
+                                  <td key={date} className="border-l p-2 text-center text-muted-foreground">—</td>
+                                );
+                              }
+                              const trendPositive = snapshot.trend14v66 != null && snapshot.trend14v66 > 0;
+                              const fiveDayPositive = snapshot.return5d != null && snapshot.return5d >= 0;
+                              return (
+                                <td
+                                  key={date}
+                                  title={`${industry.industry} · ${date} · ${snapshot.signal}`}
+                                  className={`border-l p-2 ${MATRIX_SIGNAL_STYLES[snapshot.signal]}`}
+                                >
+                                  <div className="space-y-1">
+                                    <div className="flex items-center justify-between gap-1">
+                                      <span className="text-[9px] opacity-75">14D vs 66D pace</span>
+                                      <span className={`font-semibold tabular-nums ${trendPositive ? "text-emerald-300" : "text-red-300"}`}>
+                                        {formatChangePercent(snapshot.trend14v66)}
+                                      </span>
+                                    </div>
+                                    <div className="flex items-center justify-between gap-1">
+                                      <span className="text-[9px] opacity-75">5D</span>
+                                      <span className={`font-semibold tabular-nums ${fiveDayPositive ? "text-emerald-300" : "text-red-300"}`}>
+                                        {formatChangePercent(snapshot.return5d)}
+                                      </span>
+                                    </div>
+                                    <div className="border-t border-current/10 pt-1 text-center text-[9px] font-semibold">
+                                      {snapshot.signal}
+                                    </div>
+                                  </div>
+                                </td>
+                              );
+                            })}
+                          </tr>
+                          {isExpanded && (
+                            <tr id={`industry-stocks-${encodeURIComponent(industry.industry)}`}>
+                              <td
+                                colSpan={matrixDates.length + 1}
+                                className="border-b bg-muted/20 p-3"
+                              >
+                                <div className="sticky left-0 w-[calc(100vw-20rem)] max-w-[calc(100vw-20rem)] min-w-0">
+                                  <h3 className="mb-3 text-sm font-semibold">
+                                    {industry.industry} stocks
+                                  </h3>
+                                  {heatLoading ? (
+                                    <p className="text-xs text-muted-foreground">Loading industry stocks…</p>
+                                  ) : heatError ? (
+                                    <p role="alert" className="text-xs text-amber-500">
+                                      Industry stocks are unavailable right now.
+                                    </p>
+                                  ) : stocks.length === 0 ? (
+                                    <p className="text-xs text-muted-foreground">
+                                      No stock listings are available for this industry.
+                                    </p>
+                                  ) : (
+                                    <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                                      {stocks.map((stock) => (
+                                        <Link
+                                          key={stock.symbol}
+                                          href={`/stock/${encodeURIComponent(stock.symbol)}`}
+                                          className="flex min-w-0 items-center justify-between gap-3 rounded-md border bg-card px-3 py-2 hover:bg-accent/50"
+                                        >
+                                          <span className="min-w-0">
+                                            <span className="block truncate text-xs font-semibold">{stock.name}</span>
+                                            <span className="block text-[10px] text-muted-foreground">
+                                              {stock.symbol.replace(/\.NS$/i, "")}
+                                            </span>
+                                          </span>
+                                          <span className={`shrink-0 text-xs font-semibold tabular-nums ${stock.change1d == null ? "text-muted-foreground" : changeColor(stock.change1d)}`}>
+                                            {formatChangePercent(stock.change1d)}
+                                          </span>
+                                        </Link>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
 
           {/* Quadrant shifts */}
           {quadrantShifts.length > 0 && (
